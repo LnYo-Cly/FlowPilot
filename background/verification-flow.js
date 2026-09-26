@@ -22,9 +22,11 @@
       getState,
       getTabId,
       HOTMAIL_PROVIDER,
+      ICLOUD_HME_PROVIDER = 'icloud-hme',
       isMail2925LimitReachedError,
       isStopError,
       LUCKMAIL_PROVIDER,
+      MAILNEST_PROVIDER = 'mailnest',
       YYDS_MAIL_PROVIDER = 'yyds-mail',
       MAIL_2925_VERIFICATION_INTERVAL_MS,
       MAIL_2925_VERIFICATION_MAX_ATTEMPTS,
@@ -32,7 +34,9 @@
       pollCloudMailVerificationCode,
       pollCustomMailVerificationCode,
       pollHotmailVerificationCode,
+      pollIcloudHmeVerificationCode = null,
       pollLuckmailVerificationCode,
+      pollMailnestVerificationCode = null,
       pollYydsMailVerificationCode,
       sendToContentScript,
       sendToContentScriptResilient,
@@ -1087,6 +1091,20 @@
           ...cleanPollOverrides,
         }, cleanPollOverrides, `轮询${getVerificationCodeLabel(step)}验证码邮箱`);
         return pollCloudMailVerificationCode(step, state, timedPoll.payload);
+      }
+      if (mail.provider === ICLOUD_HME_PROVIDER && typeof pollIcloudHmeVerificationCode === 'function') {
+        const timedPoll = await applyMailPollingTimeBudget(step, {
+          ...getVerificationPollPayload(step, state),
+          ...cleanPollOverrides,
+        }, cleanPollOverrides, `轮询${getVerificationCodeLabel(step)}验证码邮箱`);
+        return pollIcloudHmeVerificationCode(step, state, timedPoll.payload);
+      }
+      if (mail.provider === MAILNEST_PROVIDER && typeof pollMailnestVerificationCode === 'function') {
+        const timedPoll = await applyMailPollingTimeBudget(step, {
+          ...getVerificationPollPayload(step, state),
+          ...cleanPollOverrides,
+        }, cleanPollOverrides, `轮询${getVerificationCodeLabel(step)}验证码邮箱`);
+        return pollMailnestVerificationCode(step, state, timedPoll.payload);
       }
       if (mail.provider === CUSTOM_MAIL_PROVIDER && typeof pollCustomMailVerificationCode === 'function') {
         const timedPoll = await applyMailPollingTimeBudget(step, {

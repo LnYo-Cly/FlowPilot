@@ -1,9 +1,18 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const { readFlowRegistryBundle } = require('./helpers/script-bundles.js');
+const { readBundle, readFlowRegistryBundle, FLOW_DEFINITION_FILES } = require('./helpers/script-bundles.js');
 
 const flowRegistrySource = readFlowRegistryBundle();
+const flowRegistryWithClineSource = readBundle([
+  'flows/openai/account-delivery.js',
+  'flows/openai/index.js',
+  'flows/kiro/index.js',
+  'flows/grok/index.js',
+  'flows/cline/index.js',
+  'flows/index.js',
+  'core/flow-kernel/flow-registry.js',
+]);
 const settingsSchemaSource = fs.readFileSync('core/flow-kernel/settings-schema.js', 'utf8');
 const backgroundSource = fs.readFileSync('background.js', 'utf8');
 const DEFAULT_MADAO_BASE_URL_FOR_TEST = 'http://127.0.0.1:7822';
@@ -69,10 +78,10 @@ function extractFunction(name) {
   return backgroundSource.slice(start, end);
 }
 
-function buildHarness(extra = '') {
+function buildHarness(extra = '', registrySource = flowRegistrySource) {
   return new Function(`
 const self = {};
-${flowRegistrySource}
+${registrySource}
 ${settingsSchemaSource}
 const normalizeLanguageSettingForTest = (value = 'auto') => {
   const normalized = String(value || '').trim().replace(/_/g, '-').toLowerCase();
@@ -127,6 +136,11 @@ const SETTINGS_SCHEMA_VIEW_KEYS = Object.freeze([
   'openaiWebchatUploadEnabled',
   'openaiChatgpt2ApiUrl',
   'openaiChatgpt2ApiAdminKey',
+  'cline2apiBaseUrl',
+  'cline2apiAdminToken',
+  'clineApiBase',
+  'clineAuxMailnestProjectCode',
+  'clineAuxMailnestEmail',
   'stepExecutionRangeByFlow',
 ]);
 const SETTINGS_SCHEMA_VIEW_KEY_SET = new Set(SETTINGS_SCHEMA_VIEW_KEYS);
@@ -165,6 +179,11 @@ const PERSISTED_SETTING_DEFAULTS = {
   openaiChatgpt2ApiUploadedAt: 0,
   openaiChatgpt2ApiUploadMessage: '',
   openaiChatgpt2ApiTargetUrl: '',
+  cline2apiBaseUrl: '',
+  cline2apiAdminToken: '',
+  clineApiBase: '',
+  clineAuxMailnestProjectCode: 'microsoft001',
+  clineAuxMailnestEmail: '',
   duckDdgToken: '',
   phoneSmsProvider: 'hero-sms',
   madaoBaseUrl: DEFAULT_MADAO_BASE_URL,
@@ -340,11 +359,13 @@ ${extractFunction('setPersistentSettings')}
 ${extra}
 return {
   buildPersistentSettingsPayload,
+  buildPersistedSettingsStoragePayload,
   getPersistedSettings,
   setPersistentSettings,
   getRequestedKeys: typeof getRequestedKeys === 'function' ? getRequestedKeys : () => [],
   getPersistedWrites: typeof getPersistedWrites === 'function' ? getPersistedWrites : () => [],
   getRemovedKeys: typeof getRemovedKeys === 'function' ? getRemovedKeys : () => [],
+  getStorageData: typeof getStorageData === 'function' ? getStorageData : () => ({}),
 };
 `)();
 }
@@ -1175,4 +1196,101 @@ function getRemovedKeys() {
   assert.ok(api.getRemovedKeys().includes('settingsState'));
   assert.ok(api.getRemovedKeys().includes('mailProvider'));
   assert.ok(api.getRemovedKeys().includes('kiroRsKey'));
+});
+
+test('cline settings survive the schema-view storage round trip', async () => {
+  const api = buildHarness(`
+const storageData = {};
+const chrome = {
+  storage: {
+    local: {
+      async get(keys) {
+        const result = {};
+        (Array.isArray(keys) ? keys : [keys]).forEach((key) => {
+          if (Object.prototype.hasOwnProperty.call(storageData, key)) {
+            result[key] = storageData[key];
+          }
+        });
+        return result;
+      },
+      async set(payload) {
+        Object.assign(storageData, JSON.parse(JSON.stringify(payload)));
+      },
+      async remove(keys) {
+        (Array.isArray(keys) ? keys : [keys]).forEach((key) => {
+          delete storageData[key];
+        });
+      },
+    },
+  },
+};
+function getStorageData() {
+  return storageData;
+}
+`, flowRegistryWithClineSource);
+
+  await api.setPersistentSettings({
+    activeFlowId: 'cline',
+    targetId: 'cline2api',
+    cline2apiBaseUrl: 'http://127.0.0.1:8390',
+    cline2apiAdminToken: 'admin-secret-token',
+    clineApiBase: 'https://api.cline.bot',
+    clineAuxMailnestProjectCode: 'my-aux-project',
+    clineAuxMailnestEmail: 'aux@example.com',
+  });
+
+  const stored = api.getStorageData();
+  assert.equal(stored.cline2apiBaseUrl, undefined, 'view key must not be stored flat');
+  assert.equal(stored.cline2apiAdminToken, undefined, 'view key must not be stored flat');
+  assert.equal(stored.clineApiBase, undefined, 'view key must not be stored flat');
+  assert.equal(stored.settingsState.flows.cline.targets.cline2api.baseUrl, 'http://127.0.0.1:8390');
+  assert.equal(stored.settingsState.flows.cline.targets.cline2api.apiKey, 'admin-secret-token');
+  assert.equal(stored.settingsState.flows.cline.apiBase, 'https://api.cline.bot');
+  assert.equal(stored.settingsState.flows.cline.auxMailnestProjectCode, 'my-aux-project');
+  assert.equal(stored.settingsState.flows.cline.auxMailnestEmail, 'aux@example.com');
+
+  const restored = await api.getPersistedSettings();
+  assert.equal(restored.activeFlowId, 'cline');
+  assert.equal(restored.cline2apiBaseUrl, 'http://127.0.0.1:8390');
+  assert.equal(restored.cline2apiAdminToken, 'admin-secret-token');
+  assert.equal(restored.clineApiBase, 'https://api.cline.bot');
+  assert.equal(restored.clineAuxMailnestProjectCode, 'my-aux-project');
+  assert.equal(restored.clineAuxMailnestEmail, 'aux@example.com');
+});
+
+test('cline schema view projects flat cline keys written by legacy flat-only clients', async () => {
+  const api = buildHarness(`
+const chrome = {
+  storage: {
+    local: {
+      async get() {
+        return {
+          settingsSchemaVersion: 6,
+          settingsState: {
+            activeFlowId: 'cline',
+            flows: {
+              cline: {
+                selectedTargetId: 'cline2api',
+                targets: {
+                  cline2api: { baseUrl: 'http://nested.example.com', apiKey: 'nested-token' },
+                },
+                apiBase: 'https://api.cline.bot',
+                auxMailnestProjectCode: 'nested-project',
+                auxMailnestEmail: 'nested@example.com',
+              },
+            },
+          },
+        };
+      },
+    },
+  },
+};
+`, flowRegistryWithClineSource);
+
+  const state = await api.getPersistedSettings();
+  assert.equal(state.cline2apiBaseUrl, 'http://nested.example.com');
+  assert.equal(state.cline2apiAdminToken, 'nested-token');
+  assert.equal(state.clineApiBase, 'https://api.cline.bot');
+  assert.equal(state.clineAuxMailnestProjectCode, 'nested-project');
+  assert.equal(state.clineAuxMailnestEmail, 'nested@example.com');
 });

@@ -44,8 +44,8 @@ IPWO 住宅代理，面向 AI 自动化、浏览器操作和多账号管理等�
 - 支持 `CPA`、`SUB2API`、`Codex2API` 三种 OpenAI 来源，以及独立的 `Kiro` 和 `Grok` flow。
 - 支持邮箱注册、验证码收取、登录验证码处理、OAuth 同意页确认和平台侧账号创建。
 - OpenAI 来源支持按目标选择账号交付方式：`CPA` 支持 OAuth / ChatGPT Session，`SUB2API` 支持 OAuth / ChatGPT Session / Agent Identity，其他 OpenAI target 使用各自固定交付 route。
-- 支持 `Hotmail`、`2925`、`QQ Mail`、`163 Mail`、`163 VIP Mail`、`126 Mail`、`Inbucket`、`Cloud Mail`、`YYDS Mail`、`iCloud` 等收码方式。
-- 支持 `DuckDuckGo`、`Cloudflare`、`自定义邮箱池`、`自定义邮箱服务号池`、`Gmail / 2925 别名邮箱` 等注册邮箱生成方式。
+- 支持 `Hotmail`、`2925`、`QQ Mail`、`163 Mail`、`163 VIP Mail`、`126 Mail`、`Inbucket`、`Cloud Mail`、`YYDS Mail`、`iCloud`、`iCloud HME`、`MailNest` 等收码方式。
+- 支持 `DuckDuckGo`、`Cloudflare`、`自定义邮箱池`、`自定义邮箱服务号池`、`Gmail / 2925 别名邮箱`、`iCloud HME`、`MailNest` 等注册邮箱生成方式。
 - 支持接码平台、手机号验证、自动重试、执行范围限制、IP 代理、贡献模式和账号记录面板。
 - 支持 `Stop`、暂停后继续、失败后重试，以及本地 helper 快照同步。
 
@@ -98,6 +98,36 @@ Plus 当前暂时不可用：侧边栏和启动入口均隐藏/关闭 Plus，旧
 - `2925` 支持多账号池、自动登录、自动切号、24 小时冷却。
 - `Hotmail` 支持远程服务模式和本地 helper 模式。
 - `自定义邮箱池` 和 `自定义邮箱服务号池` 都可以和自动运行轮数联动。
+
+### iCloud HME（自建服务）
+
+`iCloud HME` 通过自建的 [icloud-hme](https://github.com/xiaozhou26/icloud-hme) 服务创建 iCloud Hide My Email 别名并轮询收件箱收码，不依赖浏览器里的 iCloud 会话。
+
+1. 部署并启动 icloud-hme 服务（默认 `http://localhost:8081`），在服务里配置好 iCloud 账号。
+2. 侧边栏将 `注册邮箱生成方式` 或 `收码方式` 选为 `iCloud HME`，填写 `服务地址` 和 `管理员密码`（对应服务的 `ICLOUD_HME_ADMIN_PASSWORD`）。
+3. 点击 `刷新账号` 拉取账号列表，可指定账号或留空自动选择首个可用账号。
+4. `别名策略`：`复用未用别名` 会优先取服务里尚未标记已用的别名，`总是新建别名` 每次调用 `POST /api/create`。
+
+说明：
+
+- 会话使用 `hme_session` Cookie + `X-CSRF-Token`，401 时自动重新登录重试一次；服务重启后内存会话失效，会自动重新登录。
+- 管理员密码保存在扩展本地设置中，不会写入日志。
+- 服务地址支持 `http://` / `https://`（含自定义端口和路径前缀），填错会在状态栏提示。
+
+### MailNest（临时 / 独占邮箱）
+
+`MailNest` 接入 [mailnest.top](https://mailnest.top/) 的购买式邮箱：临时邮箱按项目代码购买、用后可释放；独占邮箱是付费持久资产，注册完成后不自动释放。
+
+1. 侧边栏将 `注册邮箱生成方式` 或 `收码方式` 选为 `MailNest`，填写 API Key（`sk_...`）。
+2. `邮箱模式` 选 `临时邮箱` 或 `独占邮箱`；临时模式需先点 `拉取项目` 再选择项目代码（如 `chatgpt001`）。
+3. 收码直接读取接口返回的 `code_match`，无匹配时回退到共享的验证码消息挑选逻辑。
+
+### Cline 注册
+
+`Cline` flow 走微软 OAuth 登录（`api.cline.bot` → WorkOS → Microsoft），产出 access/refresh token 并推送到 cline2api 网关（`POST /admin/api/accounts/import`）。
+
+1. 需要微软登录账号（`邮箱----密码`），来源二选一：Hotmail 号池，或在 MailNest 卡片填网站账号密码后由 `账号购买` 接口自动买 `长效网页号`（号池为空时兜底购买，可在 `mailnestAccountProductType` 换商品）。微软安全验证所需的安全代码由辅助邮箱拉取：优先 MailNest 临时邮箱（`microsoft001`，配 API Key 即可），否则用带 `clientId`+`refreshToken` 的 Graph 辅助号。
+2. 侧边栏流程选 `Cline`，目标填 `cline2api` 网关地址和管理令牌，可用 `测试` 按钮探测连接。
 
 ## 快速开始
 

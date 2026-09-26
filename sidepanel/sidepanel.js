@@ -230,6 +230,10 @@ const rowKiroLoginUrl = document.getElementById('row-kiro-login-url');
 const displayKiroLoginUrl = document.getElementById('display-kiro-login-url');
 const rowKiroUploadStatus = document.getElementById('row-kiro-upload-status');
 const displayKiroUploadStatus = document.getElementById('display-kiro-upload-status');
+const inputCline2ApiUrl = document.getElementById('input-cline2api-url');
+const inputCline2ApiToken = document.getElementById('input-cline2api-token');
+const btnTestCline2Api = document.getElementById('btn-test-cline2api');
+const displayCline2ApiTestStatus = document.getElementById('display-cline2api-test-status');
 const rowGrokRegisterStatus = document.getElementById('row-grok-register-status');
 const displayGrokRegisterStatus = document.getElementById('display-grok-register-status');
 const rowGrokSsoStatus = document.getElementById('row-grok-sso-status');
@@ -367,6 +371,27 @@ const btnIcloudBulkUsed = document.getElementById('btn-icloud-bulk-used');
 const btnIcloudBulkUnused = document.getElementById('btn-icloud-bulk-unused');
 const btnIcloudBulkPreserve = document.getElementById('btn-icloud-bulk-preserve');
 const btnIcloudBulkUnpreserve = document.getElementById('btn-icloud-bulk-unpreserve');
+const icloudHmeSection = document.getElementById('icloud-hme-section');
+const inputIcloudHmeBaseUrl = document.getElementById('input-icloud-hme-base-url');
+const inputIcloudHmeAdminPassword = document.getElementById('input-icloud-hme-admin-password');
+const selectIcloudHmeAccount = document.getElementById('select-icloud-hme-account');
+const selectIcloudHmeFetchMode = document.getElementById('select-icloud-hme-fetch-mode');
+const icloudHmeStatus = document.getElementById('icloud-hme-status');
+const btnIcloudHmeRefreshAccounts = document.getElementById('btn-icloud-hme-refresh-accounts');
+const mailnestSection = document.getElementById('mailnest-section');
+const inputMailnestApiKey = document.getElementById('input-mailnest-api-key');
+const inputMailnestWebUsername = document.getElementById('input-mailnest-web-username');
+const inputMailnestWebPassword = document.getElementById('input-mailnest-web-password');
+const inputMailnestAuxEmail = document.getElementById('input-mailnest-aux-email');
+const mailnestModeGroup = document.getElementById('mailnest-mode-group');
+const rowMailnestMode = document.getElementById('row-mailnest-mode');
+const rowMailnestAuxEmail = document.getElementById('row-mailnest-aux-email');
+const rowMailnestProject = document.getElementById('row-mailnest-project');
+const selectMailnestProject = document.getElementById('select-mailnest-project');
+const mailnestStatus = document.getElementById('mailnest-status');
+const btnMailnestRefreshProjects = document.getElementById('btn-mailnest-refresh-projects');
+let mailServiceHiddenForActiveFlow = false;
+const btnMailnestTestConnection = document.getElementById('btn-mailnest-test-connection');
 const btnIcloudBulkDelete = document.getElementById('btn-icloud-bulk-delete');
 const rowHotmailServiceMode = document.getElementById('row-hotmail-service-mode');
 const hotmailServiceModeButtons = Array.from(document.querySelectorAll('[data-hotmail-service-mode]'));
@@ -1450,6 +1475,12 @@ const GMAIL_PROVIDER = 'gmail';
 const GMAIL_ALIAS_GENERATOR = 'gmail-alias';
 const LUCKMAIL_PROVIDER = 'luckmail-api';
 const YYDS_MAIL_PROVIDER = 'yyds-mail';
+const ICLOUD_HME_PROVIDER = 'icloud-hme';
+const ICLOUD_HME_GENERATOR = 'icloud-hme';
+const MAILNEST_PROVIDER = 'mailnest';
+const MAILNEST_GENERATOR = 'mailnest';
+const MAILNEST_MODE_TEMPORARY = 'temporary';
+const MAILNEST_MODE_EXCLUSIVE = 'exclusive';
 const CUSTOM_EMAIL_POOL_GENERATOR = 'custom-pool';
 const DEFAULT_LUCKMAIL_BASE_URL = 'https://mails.luckyous.com';
 const DEFAULT_LUCKMAIL_EMAIL_TYPE = 'ms_graph';
@@ -2150,6 +2181,15 @@ const MAIL_PROVIDER_LOGIN_CONFIGS = {
     label: 'YYDS Mail',
     url: 'https://vip.215.im/docs',
     buttonLabel: '文档',
+  },
+  'icloud-hme': {
+    label: 'iCloud HME 管理界面',
+    buttonLabel: '打开',
+  },
+  mailnest: {
+    label: 'MailNest 控制台',
+    url: 'https://mailnest.top/account',
+    buttonLabel: '控制台',
   },
   '2925': {
     label: '2925 邮箱',
@@ -4628,6 +4668,296 @@ function applyYydsMailSettingsState(state = {}) {
   }
 }
 
+const icloudHmeAccountsCache = { accounts: [], resolvedAccountId: '', loadedForKey: '', loading: false };
+let icloudHmeAccountsRefreshTimer = null;
+
+function setIcloudHmeStatus(message = '', tone = 'muted') {
+  if (!icloudHmeStatus) {
+    return;
+  }
+  icloudHmeStatus.textContent = String(message || '');
+  icloudHmeStatus.className = `field-feedback field-feedback-${tone}`;
+}
+
+function getIcloudHmeConnectionKey() {
+  return `${normalizeIcloudHmeBaseUrl(inputIcloudHmeBaseUrl?.value || '')}::${String(inputIcloudHmeAdminPassword?.value || '').length}`;
+}
+
+function renderIcloudHmeAccountOptions(selectedId = selectIcloudHmeAccount?.value || '') {
+  if (!selectIcloudHmeAccount) {
+    return;
+  }
+  const escapeHtmlSafe = typeof escapeHtml === 'function'
+    ? escapeHtml
+    : (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[ch]);
+  const accounts = (typeof icloudHmeAccountsCache !== 'undefined' && Array.isArray(icloudHmeAccountsCache?.accounts))
+    ? icloudHmeAccountsCache.accounts
+    : [];
+  const options = ['<option value="">自动选择（首个可用账号）</option>'];
+  for (const account of accounts) {
+    const id = String(account?.id || '').trim();
+    if (!id) continue;
+    const label = String(account?.name || account?.icloudEmail || id).trim();
+    const statusText = account?.status === 'active' ? '' : `（${account?.statusMessage || account?.status || '未就绪'}）`;
+    options.push(`<option value="${escapeHtmlSafe(id)}">${escapeHtmlSafe(label)}${escapeHtmlSafe(statusText)}</option>`);
+  }
+  selectIcloudHmeAccount.innerHTML = options.join('');
+  const normalizedSelected = String(selectedId || '').trim();
+  selectIcloudHmeAccount.value = accounts.some((account) => String(account?.id || '') === normalizedSelected)
+    ? normalizedSelected
+    : '';
+}
+
+async function refreshIcloudHmeAccounts({ silent = false } = {}) {
+  if (icloudHmeAccountsCache.loading) {
+    return;
+  }
+  const baseUrl = normalizeIcloudHmeBaseUrl(inputIcloudHmeBaseUrl?.value || '');
+  const adminPassword = String(inputIcloudHmeAdminPassword?.value || '');
+  if (!adminPassword) {
+    icloudHmeAccountsCache.accounts = [];
+    icloudHmeAccountsCache.loadedForKey = '';
+    renderIcloudHmeAccountOptions(latestState?.icloudHmeAccountId || '');
+    setIcloudHmeStatus('填写管理员密码后可加载账号列表。');
+    return;
+  }
+  icloudHmeAccountsCache.loading = true;
+  if (!silent) {
+    setIcloudHmeStatus('正在连接 iCloud HME 服务...');
+  }
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'LIST_ICLOUD_HME_ACCOUNTS',
+      source: 'sidepanel',
+      payload: { baseUrl, adminPassword },
+    });
+    if (response?.error || response?.ok === false) {
+      throw new Error(response?.error || '加载失败');
+    }
+    icloudHmeAccountsCache.accounts = Array.isArray(response?.accounts) ? response.accounts : [];
+    icloudHmeAccountsCache.resolvedAccountId = String(response?.resolvedAccountId || '').trim();
+    icloudHmeAccountsCache.loadedForKey = getIcloudHmeConnectionKey();
+    renderIcloudHmeAccountOptions(latestState?.icloudHmeAccountId || selectIcloudHmeAccount?.value || '');
+    const count = icloudHmeAccountsCache.accounts.length;
+    setIcloudHmeStatus(
+      count > 0
+        ? `已连接，检测到 ${count} 个 iCloud 账号${icloudHmeAccountsCache.resolvedAccountId ? `，默认使用 ${icloudHmeAccountsCache.resolvedAccountId}` : ''}。`
+        : '已连接，但服务中没有账号，请先在管理界面添加 iCloud 账号。',
+      count > 0 ? 'ok' : 'warn'
+    );
+  } catch (err) {
+    icloudHmeAccountsCache.loadedForKey = '';
+    setIcloudHmeStatus(`连接失败：${err?.message || err}`, 'error');
+  } finally {
+    icloudHmeAccountsCache.loading = false;
+  }
+}
+
+function queueIcloudHmeAccountsRefresh() {
+  if (!inputIcloudHmeAdminPassword?.value) {
+    return;
+  }
+  const key = getIcloudHmeConnectionKey();
+  if (icloudHmeAccountsCache.loadedForKey === key || icloudHmeAccountsCache.loading) {
+    return;
+  }
+  if (icloudHmeAccountsRefreshTimer) {
+    clearTimeout(icloudHmeAccountsRefreshTimer);
+  }
+  icloudHmeAccountsRefreshTimer = setTimeout(() => {
+    icloudHmeAccountsRefreshTimer = null;
+    refreshIcloudHmeAccounts({ silent: true }).catch(() => {});
+  }, 400);
+}
+
+function applyIcloudHmeSettingsState(state = {}) {
+  if (inputIcloudHmeBaseUrl) {
+    inputIcloudHmeBaseUrl.value = state?.icloudHmeBaseUrl || '';
+  }
+  if (inputIcloudHmeAdminPassword) {
+    inputIcloudHmeAdminPassword.value = state?.icloudHmeAdminPassword || '';
+  }
+  if (selectIcloudHmeFetchMode) {
+    selectIcloudHmeFetchMode.value = typeof normalizeIcloudFetchMode === 'function'
+      ? normalizeIcloudFetchMode(state?.icloudFetchMode)
+      : (String(state?.icloudFetchMode || '').trim().toLowerCase() === 'always_new' ? 'always_new' : 'reuse_existing');
+  }
+  if (typeof renderIcloudHmeAccountOptions === 'function') {
+    renderIcloudHmeAccountOptions(state?.icloudHmeAccountId || '');
+  }
+}
+
+// ============================================================
+// MailNest（迈巢）接码平台
+// ============================================================
+
+const mailnestProjectsCache = { temporary: [], exclusive: null, loadedForKey: '', loading: false };
+let mailnestProjectsRefreshTimer = null;
+
+function normalizeMailnestModeValue(value = '') {
+  return String(value || '').trim().toLowerCase() === MAILNEST_MODE_EXCLUSIVE
+    ? MAILNEST_MODE_EXCLUSIVE
+    : MAILNEST_MODE_TEMPORARY;
+}
+
+function getSelectedMailnestMode() {
+  const active = mailnestModeGroup?.querySelector('.choice-btn.active');
+  return normalizeMailnestModeValue(active?.dataset?.mailnestMode);
+}
+
+function setMailnestMode(mode = '') {
+  const normalized = normalizeMailnestModeValue(mode);
+  mailnestModeGroup?.querySelectorAll('.choice-btn').forEach((btn) => {
+    const active = btn.dataset.mailnestMode === normalized;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  if (rowMailnestProject) {
+    rowMailnestProject.style.display = ((typeof mailServiceHiddenForActiveFlow === 'undefined' || !mailServiceHiddenForActiveFlow) && normalized === MAILNEST_MODE_TEMPORARY) ? '' : 'none';
+  }
+}
+
+function setMailnestStatus(message = '', tone = 'muted') {
+  if (!mailnestStatus) {
+    return;
+  }
+  mailnestStatus.textContent = String(message || '');
+  mailnestStatus.className = `field-feedback field-feedback-${tone}`;
+}
+
+function renderMailnestProjectOptions(selectedCode = selectMailnestProject?.value || '') {
+  if (!selectMailnestProject) {
+    return;
+  }
+  const escapeHtmlSafe = typeof escapeHtml === 'function'
+    ? escapeHtml
+    : (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    })[ch]);
+  const projects = Array.isArray(mailnestProjectsCache.temporary) ? mailnestProjectsCache.temporary : [];
+  const options = ['<option value="">请选择项目代码</option>'];
+  for (const project of projects) {
+    const code = String(project?.code || '').trim();
+    if (!code) continue;
+    const name = String(project?.name || code).trim();
+    const stock = Number(project?.stock) || 0;
+    const price = String(project?.price || '').trim();
+    options.push(
+      `<option value="${escapeHtmlSafe(code)}">${escapeHtmlSafe(name)}（${escapeHtmlSafe(code)}）库存 ${stock}${price ? ` $${escapeHtmlSafe(price)}` : ''}</option>`
+    );
+  }
+  selectMailnestProject.innerHTML = options.join('');
+  const normalizedSelected = String(selectedCode || '').trim();
+  selectMailnestProject.value = projects.some((project) => String(project?.code || '') === normalizedSelected)
+    ? normalizedSelected
+    : '';
+}
+
+async function refreshMailnestProjects({ silent = false } = {}) {
+  if (mailnestProjectsCache.loading) {
+    return;
+  }
+  const apiKey = String(inputMailnestApiKey?.value || '').trim();
+  if (!apiKey) {
+    mailnestProjectsCache.temporary = [];
+    mailnestProjectsCache.exclusive = null;
+    mailnestProjectsCache.loadedForKey = '';
+    renderMailnestProjectOptions(latestState?.mailnestProjectCode || '');
+    setMailnestStatus('填写 API Key 后可拉取项目列表。');
+    return;
+  }
+  mailnestProjectsCache.loading = true;
+  if (!silent) {
+    setMailnestStatus('正在拉取 MailNest 项目列表...');
+  }
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'LIST_MAILNEST_PRODUCTS',
+      source: 'sidepanel',
+      payload: { apiKey },
+    });
+    if (response?.error || response?.ok === false) {
+      throw new Error(response?.error || '拉取失败');
+    }
+    mailnestProjectsCache.temporary = Array.isArray(response?.temporary) ? response.temporary : [];
+    mailnestProjectsCache.exclusive = response?.exclusive || null;
+    mailnestProjectsCache.loadedForKey = apiKey;
+    renderMailnestProjectOptions(latestState?.mailnestProjectCode || selectMailnestProject?.value || '');
+    const exclusiveInfo = mailnestProjectsCache.exclusive
+      ? `；独占邮箱库存 ${mailnestProjectsCache.exclusive.stock} 个 $${mailnestProjectsCache.exclusive.price}/个`
+      : '';
+    setMailnestStatus(`已连接，检测到 ${mailnestProjectsCache.temporary.length} 个临时邮箱项目${exclusiveInfo}。`, 'ok');
+  } catch (err) {
+    mailnestProjectsCache.loadedForKey = '';
+    setMailnestStatus(`连接失败：${err?.message || err}`, 'error');
+  } finally {
+    mailnestProjectsCache.loading = false;
+  }
+}
+
+async function testMailnestConnectionFromUi() {
+  const apiKey = String(inputMailnestApiKey?.value || '').trim();
+  if (!apiKey) {
+    setMailnestStatus('请先填写 MailNest API Key。', 'warn');
+    return;
+  }
+  setMailnestStatus('正在测试 MailNest 连接...');
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'TEST_MAILNEST_CONNECTION',
+      source: 'sidepanel',
+      payload: { apiKey },
+    });
+    if (response?.error || response?.ok === false) {
+      throw new Error(response?.error || '连接失败');
+    }
+    const available = String(response?.balance?.availableBalance || '').trim();
+    setMailnestStatus(`连接成功，可用余额 $${available || '0'}。`, 'ok');
+  } catch (err) {
+    setMailnestStatus(`连接失败：${err?.message || err}`, 'error');
+  }
+}
+
+function queueMailnestProjectsRefresh() {
+  const apiKey = String(inputMailnestApiKey?.value || '').trim();
+  if (!apiKey) {
+    return;
+  }
+  if (mailnestProjectsCache.loadedForKey === apiKey || mailnestProjectsCache.loading) {
+    return;
+  }
+  if (mailnestProjectsRefreshTimer) {
+    clearTimeout(mailnestProjectsRefreshTimer);
+  }
+  mailnestProjectsRefreshTimer = setTimeout(() => {
+    mailnestProjectsRefreshTimer = null;
+    refreshMailnestProjects({ silent: true }).catch(() => {});
+  }, 400);
+}
+
+function applyMailnestSettingsState(state = {}) {
+  if (inputMailnestApiKey) {
+    inputMailnestApiKey.value = state?.mailnestApiKey || '';
+  }
+  if (inputMailnestWebUsername) {
+    inputMailnestWebUsername.value = state?.mailnestWebUsername || '';
+  }
+  if (inputMailnestWebPassword) {
+    inputMailnestWebPassword.value = state?.mailnestWebPassword || '';
+  }
+  if (inputMailnestAuxEmail) {
+    inputMailnestAuxEmail.value = String(
+      state?.clineAuxMailnestEmail
+      || state?.settingsState?.flows?.cline?.auxMailnestEmail
+      || ''
+    );
+  }
+  setMailnestMode(state?.mailnestMode);
+  renderMailnestProjectOptions(state?.mailnestProjectCode || '');
+}
+
 function collectSettingsPayload() {
   const safeUiLanguage = typeof currentUiLanguage !== 'undefined' ? currentUiLanguage : 'auto';
   const normalizeYydsBaseUrlValue = typeof normalizeYydsMailBaseUrl === 'function'
@@ -4668,9 +4998,25 @@ function collectSettingsPayload() {
   const accountContributionEnabled = typeof isContributionModeActiveForFlow === 'function'
     ? isContributionModeActiveForFlow(latestState, activeFlowId)
     : (activeFlowId === defaultFlowId && Boolean(latestState?.accountContributionEnabled));
-  const icloudFetchModeRawValue = typeof selectIcloudFetchMode !== 'undefined'
-    ? String(selectIcloudFetchMode?.value || '')
-    : '';
+  const icloudFetchModeRawValue = (() => {
+    const icloudHmeGeneratorId = typeof ICLOUD_HME_GENERATOR === 'string' ? ICLOUD_HME_GENERATOR : 'icloud-hme';
+    const icloudHmeProviderId = typeof ICLOUD_HME_PROVIDER === 'string' ? ICLOUD_HME_PROVIDER : 'icloud-hme';
+    const selectedGenerator = typeof getSelectedEmailGenerator === 'function'
+      ? getSelectedEmailGenerator()
+      : '';
+    const selectedProvider = String(selectMailProvider?.value || '').trim().toLowerCase();
+    if (
+      selectedGenerator === icloudHmeGeneratorId
+      || selectedProvider === icloudHmeProviderId
+    ) {
+      if (typeof selectIcloudHmeFetchMode !== 'undefined' && selectIcloudHmeFetchMode) {
+        return String(selectIcloudHmeFetchMode.value || '');
+      }
+    }
+    return typeof selectIcloudFetchMode !== 'undefined'
+      ? String(selectIcloudFetchMode?.value || '')
+      : '';
+  })();
   const icloudTargetMailboxTypeValue = typeof selectIcloudTargetMailboxType !== 'undefined'
     ? selectIcloudTargetMailboxType?.value
     : '';
@@ -5486,6 +5832,20 @@ function collectSettingsPayload() {
     kiroRsKey: currentKiroRsKeyValue !== null
       ? currentKiroRsKeyValue
       : String(latestState?.kiroRsKey || '').trim(),
+    cline2apiBaseUrl: (typeof inputCline2ApiUrl !== 'undefined' && inputCline2ApiUrl)
+      ? String(inputCline2ApiUrl.value ?? '').trim()
+      : String(
+        latestState?.cline2apiBaseUrl
+        || latestState?.settingsState?.flows?.cline?.targets?.cline2api?.baseUrl
+        || ''
+      ).trim(),
+    cline2apiAdminToken: (typeof inputCline2ApiToken !== 'undefined' && inputCline2ApiToken)
+      ? String(inputCline2ApiToken.value ?? '')
+      : String(
+        latestState?.cline2apiAdminToken
+        || latestState?.settingsState?.flows?.cline?.targets?.cline2api?.apiKey
+        || ''
+      ),
     ...createSharedWebchatConfigPatch(sharedWebchatUrl, sharedWebchatAdminKey),
     grok2ApiUrl: currentGrok2ApiUrlValue,
     grok2ApiAdminKey: currentGrok2ApiKeyValue,
@@ -5624,6 +5984,42 @@ function collectSettingsPayload() {
     cloudMailAdminPassword: (typeof inputCloudMailAdminPassword !== 'undefined' && inputCloudMailAdminPassword) ? inputCloudMailAdminPassword.value : '',
     cloudMailReceiveMailbox: normalizeCloudMailReceiveMailboxInput((typeof inputCloudMailReceiveMailbox !== 'undefined' && inputCloudMailReceiveMailbox) ? inputCloudMailReceiveMailbox.value : ''),
     cloudMailDomain: normalizeCloudMailDomainInput((typeof inputCloudMailDomain !== 'undefined' && inputCloudMailDomain) ? inputCloudMailDomain.value : ''),
+    icloudHmeBaseUrl: (typeof normalizeIcloudHmeBaseUrl === 'function'
+      ? normalizeIcloudHmeBaseUrl
+      : (value) => String(value || '').trim().replace(/\/+$/, '') || 'http://localhost:8081')(
+      (typeof inputIcloudHmeBaseUrl !== 'undefined' && inputIcloudHmeBaseUrl) ? inputIcloudHmeBaseUrl.value : ''
+    ),
+    icloudHmeAdminPassword: (typeof inputIcloudHmeAdminPassword !== 'undefined' && inputIcloudHmeAdminPassword)
+      ? inputIcloudHmeAdminPassword.value
+      : '',
+    icloudHmeAccountId: (typeof selectIcloudHmeAccount !== 'undefined' && selectIcloudHmeAccount)
+      ? String(selectIcloudHmeAccount.value || '').trim()
+      : '',
+    mailnestApiKey: (typeof inputMailnestApiKey !== 'undefined' && inputMailnestApiKey)
+      ? inputMailnestApiKey.value
+      : '',
+    mailnestWebUsername: (typeof inputMailnestWebUsername !== 'undefined' && inputMailnestWebUsername)
+      ? String(inputMailnestWebUsername.value || '').trim()
+      : '',
+    mailnestWebPassword: (typeof inputMailnestWebPassword !== 'undefined' && inputMailnestWebPassword)
+      ? String(inputMailnestWebPassword.value || '')
+      : '',
+    clineAuxMailnestEmail: (typeof inputMailnestAuxEmail !== 'undefined' && inputMailnestAuxEmail)
+      ? String(inputMailnestAuxEmail.value || '').trim().toLowerCase()
+      : String(
+        latestState?.clineAuxMailnestEmail
+        || latestState?.settingsState?.flows?.cline?.auxMailnestEmail
+        || ''
+      ).trim().toLowerCase(),
+    mailnestBaseUrl: (typeof inputMailnestBaseUrl !== 'undefined' && inputMailnestBaseUrl)
+      ? String(inputMailnestBaseUrl.value || '').trim()
+      : '',
+    mailnestMode: (typeof getSelectedMailnestMode === 'function')
+      ? getSelectedMailnestMode()
+      : 'temporary',
+    mailnestProjectCode: (typeof selectMailnestProject !== 'undefined' && selectMailnestProject)
+      ? String(selectMailnestProject.value || '').trim()
+      : '',
     yydsMailApiKey: (typeof inputYydsMailApiKey !== 'undefined' && inputYydsMailApiKey) ? inputYydsMailApiKey.value.trim() : '',
     yydsMailBaseUrl: normalizeYydsBaseUrlValue((typeof inputYydsMailBaseUrl !== 'undefined' && inputYydsMailBaseUrl) ? inputYydsMailBaseUrl.value : ''),
     autoRunSkipFailures: inputAutoSkipFailures.checked,
@@ -12014,6 +12410,20 @@ function applySettingsState(state) {
   if (typeof inputKiroRsKey !== 'undefined' && inputKiroRsKey) {
     inputKiroRsKey.value = String(state?.kiroRsKey || '');
   }
+  if (typeof inputCline2ApiUrl !== 'undefined' && inputCline2ApiUrl) {
+    inputCline2ApiUrl.value = String(
+      state?.cline2apiBaseUrl
+      || state?.settingsState?.flows?.cline?.targets?.cline2api?.baseUrl
+      || ''
+    ).trim();
+  }
+  if (typeof inputCline2ApiToken !== 'undefined' && inputCline2ApiToken) {
+    inputCline2ApiToken.value = String(
+      state?.cline2apiAdminToken
+      || state?.settingsState?.flows?.cline?.targets?.cline2api?.apiKey
+      || ''
+    );
+  }
   if (typeof inputGrokWebchat2ApiUrl !== 'undefined' && inputGrokWebchat2ApiUrl) {
     inputGrokWebchat2ApiUrl.value = String(getSharedWebchatUrlFromState(state) || '').trim();
   }
@@ -12192,7 +12602,7 @@ function applySettingsState(state) {
     ? YYDS_MAIL_PROVIDER
     : 'yyds-mail';
   const restoredMailProvider = isCustomMailProvider(state?.mailProvider)
-    || [ICLOUD_PROVIDER, 'hotmail-api', GMAIL_PROVIDER, 'luckmail-api', yydsMailProvider, '163', '163-vip', '126', 'qq', 'inbucket', '2925', 'cloudflare-temp-email', 'cloudmail'].includes(String(state?.mailProvider || '').trim())
+    || [ICLOUD_PROVIDER, (typeof ICLOUD_HME_PROVIDER === 'string' ? ICLOUD_HME_PROVIDER : 'icloud-hme'), 'hotmail-api', GMAIL_PROVIDER, 'luckmail-api', yydsMailProvider, '163', '163-vip', '126', 'qq', 'inbucket', '2925', 'cloudflare-temp-email', 'cloudmail', 'mailnest'].includes(String(state?.mailProvider || '').trim())
     ? String(state?.mailProvider || '163').trim()
     : (String(state?.emailGenerator || '').trim().toLowerCase() === 'custom'
       || String(state?.emailGenerator || '').trim().toLowerCase() === 'manual'
@@ -12220,12 +12630,16 @@ function applySettingsState(state) {
       selectEmailGenerator.value = CUSTOM_EMAIL_POOL_GENERATOR;
     } else if (restoredEmailGenerator === 'icloud') {
       selectEmailGenerator.value = 'icloud';
+    } else if (restoredEmailGenerator === (typeof ICLOUD_HME_GENERATOR === 'string' ? ICLOUD_HME_GENERATOR : 'icloud-hme')) {
+      selectEmailGenerator.value = typeof ICLOUD_HME_GENERATOR === 'string' ? ICLOUD_HME_GENERATOR : 'icloud-hme';
     } else if (restoredEmailGenerator === 'cloudflare') {
       selectEmailGenerator.value = 'cloudflare';
     } else if (restoredEmailGenerator === 'cloudflare-temp-email') {
       selectEmailGenerator.value = 'cloudflare-temp-email';
     } else if (restoredEmailGenerator === 'cloudmail') {
       selectEmailGenerator.value = 'cloudmail';
+    } else if (restoredEmailGenerator === 'mailnest') {
+      selectEmailGenerator.value = 'mailnest';
     } else {
       selectEmailGenerator.value = 'duck';
     }
@@ -12289,6 +12703,12 @@ function applySettingsState(state) {
   }
   if (typeof applyYydsMailSettingsState === 'function') {
     applyYydsMailSettingsState(state);
+  }
+  if (typeof applyIcloudHmeSettingsState === 'function') {
+    applyIcloudHmeSettingsState(state);
+  }
+  if (typeof applyMailnestSettingsState === 'function') {
+    applyMailnestSettingsState(state);
   }
   renderCloudflareDomainOptions(state?.cloudflareDomain || '');
   setCloudflareDomainEditMode(false, { clearInput: true });
@@ -13307,6 +13727,19 @@ function isIcloudMailProvider(provider = selectMailProvider.value) {
   return String(provider || '').trim().toLowerCase() === ICLOUD_PROVIDER;
 }
 
+function isIcloudHmeMailProvider(provider = selectMailProvider.value) {
+  const icloudHmeProviderId = typeof ICLOUD_HME_PROVIDER === 'string' ? ICLOUD_HME_PROVIDER : 'icloud-hme';
+  return String(provider || '').trim().toLowerCase() === icloudHmeProviderId;
+}
+
+function normalizeIcloudHmeBaseUrl(value = '') {
+  if (window.IcloudHmeUtils?.normalizeIcloudHmeBaseUrl) {
+    return window.IcloudHmeUtils.normalizeIcloudHmeBaseUrl(value);
+  }
+  const trimmed = String(value || '').trim();
+  return trimmed || 'http://localhost:8081';
+}
+
 function normalizeLuckmailBaseUrl(value = '') {
   const trimmed = String(value || '').trim();
   if (!trimmed) {
@@ -13371,6 +13804,10 @@ function getSelectedEmailGenerator() {
   if (generator === 'icloud') {
     return 'icloud';
   }
+  const icloudHmeGenerator = typeof ICLOUD_HME_GENERATOR === 'string' ? ICLOUD_HME_GENERATOR : 'icloud-hme';
+  if (generator === icloudHmeGenerator) {
+    return icloudHmeGenerator;
+  }
   if (generator === 'cloudflare') return 'cloudflare';
   if (generator === 'cloudflare-temp-email') return 'cloudflare-temp-email';
   if (generator === 'cloudmail') return 'cloudmail';
@@ -13403,6 +13840,15 @@ function getEmailGeneratorUiCopy() {
       placeholder: '点击获取 iCloud 隐私邮箱，或手动粘贴邮箱',
       successVerb: '获取',
       label: 'iCloud 隐私邮箱',
+    };
+  }
+  const icloudHmeGeneratorId = typeof ICLOUD_HME_GENERATOR === 'string' ? ICLOUD_HME_GENERATOR : 'icloud-hme';
+  if (getSelectedEmailGenerator() === icloudHmeGeneratorId) {
+    return {
+      buttonLabel: '获取',
+      placeholder: '点击通过 iCloud HME 生成隐私邮箱别名，或手动粘贴邮箱',
+      successVerb: '获取',
+      label: 'iCloud HME 别名',
     };
   }
   if (getSelectedEmailGenerator() === 'cloudflare') {
@@ -13615,6 +14061,12 @@ function getMailProviderLoginUrl(provider = selectMailProvider.value) {
   if (String(provider || '').trim() === ICLOUD_PROVIDER) {
     return getIcloudLoginUrlForHost(getSelectedIcloudHostPreference());
   }
+  const icloudHmeProviderId = typeof ICLOUD_HME_PROVIDER === 'string' ? ICLOUD_HME_PROVIDER : 'icloud-hme';
+  if (String(provider || '').trim() === icloudHmeProviderId) {
+    return normalizeIcloudHmeBaseUrl(
+      inputIcloudHmeBaseUrl?.value || latestState?.icloudHmeBaseUrl || ''
+    );
+  }
   const url = String(config?.url || '').trim();
   return url ? url : '';
 }
@@ -13750,6 +14202,9 @@ function updateMailProviderUI() {
       state: latestState || {},
     })
     : null;
+  mailServiceHiddenForActiveFlow = Boolean(capabilityState)
+    && Array.isArray(capabilityState.visibleGroupIds)
+    && !capabilityState.visibleGroupIds.includes('service-email');
   const canShowLuckmail = capabilityState
     ? Boolean(capabilityState.canShowLuckmail)
     : true;
@@ -13805,7 +14260,12 @@ function updateMailProviderUI() {
   const useCustomEmail = isCustomMailProvider();
   const useCustomMailProviderPool = useCustomEmail && usesCustomMailProviderPool(selectMailProvider.value);
   const useIcloudProvider = isIcloudMailProvider();
-  const useEmailGenerator = !useHotmail && !useLuckmail && !useYydsMail && !useCustomEmail && (!useGeneratedAlias || useGmail);
+  const useIcloudHmeProvider = typeof isIcloudHmeMailProvider === 'function'
+    ? isIcloudHmeMailProvider()
+    : String(selectMailProvider.value || '').trim().toLowerCase() === 'icloud-hme';
+  const mailnestProviderId = typeof MAILNEST_PROVIDER === 'string' ? MAILNEST_PROVIDER : 'mailnest';
+  const useMailnestProvider = String(selectMailProvider.value || '').trim().toLowerCase() === mailnestProviderId;
+  const useEmailGenerator = !useHotmail && !useLuckmail && !useYydsMail && !useCustomEmail && !useMailnestProvider && (!useGeneratedAlias || useGmail);
   const useCloudflareTempEmailProvider = selectMailProvider.value === 'cloudflare-temp-email';
   const useCloudMailProvider = selectMailProvider.value === 'cloudmail';
   const aliasUiCopy = useGeneratedAlias
@@ -13837,6 +14297,11 @@ function updateMailProviderUI() {
   const useIcloud = selectedGenerator === 'icloud';
   const useCloudflareTempEmailGenerator = selectedGenerator === 'cloudflare-temp-email';
   const useCloudMailGenerator = selectedGenerator === 'cloudmail';
+  const icloudHmeGeneratorId = typeof ICLOUD_HME_GENERATOR === 'string' ? ICLOUD_HME_GENERATOR : 'icloud-hme';
+  const useIcloudHmeGenerator = selectedGenerator === icloudHmeGeneratorId;
+  const showIcloudHmeSettings = useIcloudHmeProvider || (useEmailGenerator && useIcloudHmeGenerator);
+  const useMailnestGenerator = selectedGenerator === (typeof MAILNEST_GENERATOR === 'string' ? MAILNEST_GENERATOR : 'mailnest');
+  const showMailnestSettings = useMailnestProvider || (useEmailGenerator && useMailnestGenerator);
   const showCloudflareDomain = useEmailGenerator && useCloudflare;
   const showCloudflareTempEmailSettings = useCloudflareTempEmailProvider || (useEmailGenerator && useCloudflareTempEmailGenerator);
   const showCloudflareTempEmailLookupMode = useCloudflareTempEmailProvider && !useCloudflareTempEmailGenerator;
@@ -13911,6 +14376,18 @@ function updateMailProviderUI() {
   if (typeof rowCloudMailAdminPassword !== 'undefined' && rowCloudMailAdminPassword) rowCloudMailAdminPassword.style.display = showCloudMailSettings ? '' : 'none';
   if (typeof rowCloudMailReceiveMailbox !== 'undefined' && rowCloudMailReceiveMailbox) rowCloudMailReceiveMailbox.style.display = showCloudMailReceiveMailbox ? '' : 'none';
   if (typeof rowCloudMailDomain !== 'undefined' && rowCloudMailDomain) rowCloudMailDomain.style.display = showCloudMailDomain ? '' : 'none';
+  if (typeof icloudHmeSection !== 'undefined' && icloudHmeSection) {
+    icloudHmeSection.style.display = showIcloudHmeSettings ? '' : 'none';
+    if (showIcloudHmeSettings && typeof queueIcloudHmeAccountsRefresh === 'function') {
+      queueIcloudHmeAccountsRefresh();
+    }
+  }
+  if (typeof mailnestSection !== 'undefined' && mailnestSection) {
+    mailnestSection.style.display = showMailnestSettings ? '' : 'none';
+    if (showMailnestSettings && typeof queueMailnestProjectsRefresh === 'function') {
+      queueMailnestProjectsRefresh();
+    }
+  }
   if (icloudSection) {
     const showIcloudSection = (useEmailGenerator && useIcloud) || useIcloudProvider;
     icloudSection.style.display = showIcloudSection ? '' : 'none';
@@ -14016,8 +14493,8 @@ function updateMailProviderUI() {
   if (rowHotmailLocalBaseUrl) {
     rowHotmailLocalBaseUrl.style.display = useHotmail && hotmailServiceMode === HOTMAIL_SERVICE_MODE_LOCAL ? '' : 'none';
   }
-  btnFetchEmail.hidden = useHotmail || useLuckmail || useCustomEmail || useCustomEmailPool;
-  inputEmail.readOnly = useHotmail || useLuckmail;
+  btnFetchEmail.hidden = useHotmail || useLuckmail || useCustomEmail || useCustomEmailPool || mailServiceHiddenForActiveFlow;
+  inputEmail.readOnly = useHotmail || useLuckmail || mailServiceHiddenForActiveFlow;
   inputEmail.placeholder = useHotmail
     ? '由 Hotmail 账号池自动分配'
     : (useLuckmail
@@ -14036,7 +14513,10 @@ function updateMailProviderUI() {
   if (!btnFetchEmail.disabled) {
     btnFetchEmail.textContent = uiCopy.buttonLabel;
   }
-  if (autoHintText) {
+  if (autoHintText && mailServiceHiddenForActiveFlow) {
+    autoHintText.textContent = '由 Hotmail 号池自动分配微软账号（邮箱+密码）';
+  }
+  if (autoHintText && !mailServiceHiddenForActiveFlow) {
     autoHintText.textContent = useHotmail
       ? '请先校验并选择一个 Hotmail 账号'
       : (useLuckmail
@@ -14088,7 +14568,7 @@ function updateMailProviderUI() {
       || '目标邮箱';
     autoHintText.textContent = `iCloud ${isIcloudComCnHost ? 'com.cn' : ''} 当前使用转发收码：第 4/8 步会从 ${forwardProviderLabel} 轮询验证码。`;
   }
-  if (useHotmail) {
+  if (useHotmail || mailServiceHiddenForActiveFlow) {
     inputEmail.value = getCurrentHotmailEmail();
   } else if (useLuckmail) {
     inputEmail.value = getCurrentLuckmailEmail();
@@ -14104,6 +14584,20 @@ function updateMailProviderUI() {
   }
   if (typeof inputRunCount !== 'undefined' && inputRunCount) {
     inputRunCount.disabled = currentAutoRun.autoRunning || shouldLockRunCountToEmailPool();
+  }
+  if (typeof rowMailnestMode !== 'undefined' && rowMailnestMode) {
+    rowMailnestMode.style.display = mailServiceHiddenForActiveFlow ? 'none' : '';
+  }
+  // 固定辅助邮箱仅对自带微软登录链路的流程（cline）有意义
+  if (typeof rowMailnestAuxEmail !== 'undefined' && rowMailnestAuxEmail) {
+    rowMailnestAuxEmail.style.display = mailServiceHiddenForActiveFlow ? '' : 'none';
+  }
+  if (mailServiceHiddenForActiveFlow) {
+    [cloudflareTempEmailSection, cloudMailSection, yydsMailSection, icloudSection,
+      icloudHmeSection, mail2925Section, luckmailSection]
+      .forEach((section) => { if (section) section.style.display = 'none'; });
+    if (hotmailSection) hotmailSection.style.display = '';
+    if (mailnestSection) mailnestSection.style.display = '';
   }
   renderHotmailAccounts();
   if (useMail2925) {
@@ -16538,6 +17032,44 @@ btnTestKiroRs?.addEventListener('click', async () => {
   }
 });
 
+function setCline2ApiTestStatus(text) {
+  if (typeof displayCline2ApiTestStatus !== 'undefined' && displayCline2ApiTestStatus) {
+    displayCline2ApiTestStatus.textContent = String(text || '');
+  }
+}
+
+btnTestCline2Api?.addEventListener('click', async () => {
+  const defaultLabel = btnTestCline2Api.textContent || '测试';
+  btnTestCline2Api.disabled = true;
+  btnTestCline2Api.textContent = '测试中';
+  setCline2ApiTestStatus('测试中...');
+  try {
+    await persistCurrentSettingsForAction();
+    const response = await sendSidepanelMessage({
+      type: 'TEST_CLINE2API_CONNECTION',
+      payload: {
+        baseUrl: String(inputCline2ApiUrl?.value || '').trim(),
+        adminToken: String(inputCline2ApiToken?.value || ''),
+      },
+    });
+    if (response?.error) {
+      throw new Error(response.error);
+    }
+    const message = response?.ok === false
+      ? 'cline2api 连接失败。'
+      : `cline2api 连接成功（HTTP ${response?.status || 200}）。`;
+    setCline2ApiTestStatus(message);
+    showToast(message, response?.ok === false ? 'error' : 'success', 2600);
+  } catch (error) {
+    const message = error?.message || 'cline2api 测试失败。';
+    setCline2ApiTestStatus(message);
+    showToast(message, 'error', 4200);
+  } finally {
+    btnTestCline2Api.disabled = false;
+    btnTestCline2Api.textContent = defaultLabel;
+  }
+});
+
 btnTestSub2ApiConnection?.addEventListener('click', async () => {
   const defaultLabel = btnTestSub2ApiConnection.textContent || '测试并同步分组';
   btnTestSub2ApiConnection.disabled = true;
@@ -16807,6 +17339,82 @@ checkboxAutoDeleteIcloud?.addEventListener('change', () => {
   saveSettings({ silent: true }).catch(() => { });
 });
 
+inputIcloudHmeBaseUrl?.addEventListener('input', () => {
+  markSettingsDirty(true);
+  scheduleSettingsAutoSave();
+});
+inputIcloudHmeBaseUrl?.addEventListener('blur', () => {
+  inputIcloudHmeBaseUrl.value = normalizeIcloudHmeBaseUrl(inputIcloudHmeBaseUrl.value);
+  updateMailProviderUI();
+  saveSettings({ silent: true }).catch(() => { });
+});
+
+inputIcloudHmeAdminPassword?.addEventListener('input', () => {
+  icloudHmeAccountsCache.loadedForKey = '';
+  markSettingsDirty(true);
+  scheduleSettingsAutoSave();
+});
+inputIcloudHmeAdminPassword?.addEventListener('blur', () => {
+  saveSettings({ silent: true }).catch(() => { });
+  queueIcloudHmeAccountsRefresh();
+});
+
+selectIcloudHmeAccount?.addEventListener('change', () => {
+  markSettingsDirty(true);
+  saveSettings({ silent: true }).catch(() => { });
+});
+
+selectIcloudHmeFetchMode?.addEventListener('change', () => {
+  markSettingsDirty(true);
+  saveSettings({ silent: true }).catch(() => { });
+});
+
+btnIcloudHmeRefreshAccounts?.addEventListener('click', () => {
+  refreshIcloudHmeAccounts().catch(() => {});
+});
+
+inputMailnestApiKey?.addEventListener('input', () => {
+  mailnestProjectsCache.loadedForKey = '';
+  markSettingsDirty(true);
+  scheduleSettingsAutoSave();
+});
+inputMailnestApiKey?.addEventListener('blur', () => {
+  saveSettings({ silent: true }).catch(() => { });
+  queueMailnestProjectsRefresh();
+});
+
+[inputMailnestWebUsername, inputMailnestWebPassword, inputMailnestAuxEmail].forEach((input) => {
+  input?.addEventListener('input', () => {
+    markSettingsDirty(true);
+    scheduleSettingsAutoSave();
+  });
+  input?.addEventListener('blur', () => {
+    saveSettings({ silent: true }).catch(() => { });
+  });
+});
+
+selectMailnestProject?.addEventListener('change', () => {
+  markSettingsDirty(true);
+  saveSettings({ silent: true }).catch(() => { });
+});
+
+mailnestModeGroup?.querySelectorAll('.choice-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    setMailnestMode(btn.dataset.mailnestMode);
+    markSettingsDirty(true);
+    saveSettings({ silent: true }).catch(() => { });
+  });
+});
+
+btnMailnestRefreshProjects?.addEventListener('click', () => {
+  mailnestProjectsCache.loadedForKey = '';
+  refreshMailnestProjects().catch(() => {});
+});
+
+btnMailnestTestConnection?.addEventListener('click', () => {
+  testMailnestConnectionFromUi().catch(() => {});
+});
+
 selectPanelMode.addEventListener('change', async () => {
   setSub2ApiConnectionTestStatus('未测试');
   const activeFlowId = typeof getSelectedFlowId === 'function'
@@ -16877,6 +17485,17 @@ selectPanelMode.addEventListener('change', async () => {
   input?.addEventListener('input', () => {
     markSettingsDirty(true);
     setKiroRsConnectionTestStatus('未测试');
+    scheduleSettingsAutoSave();
+  });
+  input?.addEventListener('blur', () => {
+    saveSettings({ silent: true }).catch(() => { });
+  });
+});
+
+[inputCline2ApiUrl, inputCline2ApiToken].forEach((input) => {
+  input?.addEventListener('input', () => {
+    markSettingsDirty(true);
+    setCline2ApiTestStatus('未测试');
     scheduleSettingsAutoSave();
   });
   input?.addEventListener('blur', () => {
@@ -19310,6 +19929,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.payload.cloudMailDomain !== undefined && inputCloudMailDomain) {
         inputCloudMailDomain.value = message.payload.cloudMailDomain || '';
       }
+      if (message.payload.icloudHmeBaseUrl !== undefined && inputIcloudHmeBaseUrl) {
+        inputIcloudHmeBaseUrl.value = message.payload.icloudHmeBaseUrl || '';
+      }
+      if (message.payload.icloudHmeAdminPassword !== undefined && inputIcloudHmeAdminPassword) {
+        inputIcloudHmeAdminPassword.value = message.payload.icloudHmeAdminPassword || '';
+      }
+      if (message.payload.icloudHmeAccountId !== undefined && selectIcloudHmeAccount) {
+        renderIcloudHmeAccountOptions(String(message.payload.icloudHmeAccountId || ''));
+      }
+      if (
+        message.payload.icloudHmeBaseUrl !== undefined
+        || message.payload.icloudHmeAdminPassword !== undefined
+        || message.payload.icloudHmeAccountId !== undefined
+      ) {
+        updateMailProviderUI();
+      }
       if (message.payload.duckDdgToken !== undefined && inputDuckDdgToken) {
         inputDuckDdgToken.value = String(message.payload.duckDdgToken || '').trim();
         updateMailProviderUI();
@@ -19395,6 +20030,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }
       if (message.payload.icloudFetchMode !== undefined && selectIcloudFetchMode) {
         selectIcloudFetchMode.value = normalizeIcloudFetchMode(message.payload.icloudFetchMode);
+        if (selectIcloudHmeFetchMode) {
+          selectIcloudHmeFetchMode.value = normalizeIcloudFetchMode(message.payload.icloudFetchMode);
+        }
       }
       if (message.payload.autoRunSkipFailures !== undefined) {
         inputAutoSkipFailures.checked = Boolean(message.payload.autoRunSkipFailures);

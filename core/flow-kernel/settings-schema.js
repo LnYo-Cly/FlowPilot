@@ -814,6 +814,33 @@
       };
     }
 
+    function normalizeClineSettings(input = {}, defaults = {}, currentFlow = {}) {
+      const defaultClineFlow = isPlainObject(defaults?.flows?.cline)
+        ? defaults.flows.cline
+        : {};
+      const defaultClineTargets = isPlainObject(defaultClineFlow.targets)
+        ? defaultClineFlow.targets
+        : {};
+      const cline2apiCurrent = isPlainObject(currentFlow.targets?.cline2api)
+        ? currentFlow.targets.cline2api
+        : {};
+      const cline2apiSource = {
+        ...cline2apiCurrent,
+        baseUrl: input?.cline2apiBaseUrl ?? cline2apiCurrent.baseUrl,
+        apiKey: input?.cline2apiAdminToken ?? cline2apiCurrent.apiKey,
+      };
+      return {
+        ...currentFlow,
+        apiBase: input?.clineApiBase ?? currentFlow.apiBase,
+        auxMailnestProjectCode: input?.clineAuxMailnestProjectCode ?? currentFlow.auxMailnestProjectCode,
+        auxMailnestEmail: input?.clineAuxMailnestEmail ?? currentFlow.auxMailnestEmail,
+        targets: {
+          ...currentFlow.targets,
+          cline2api: normalizeFlowTargetState('cline', 'cline2api', cline2apiSource, defaultClineTargets.cline2api || {}),
+        },
+      };
+    }
+
     function normalizeSettingsState(input = {}, options = {}) {
       const defaults = buildDefaultSettingsState();
       const nested = isPlainObject(input?.settingsState)
@@ -897,6 +924,9 @@
       if (normalized.flows.grok) {
         normalized.flows.grok = normalizeGrokSettings(input, nested, defaults, normalized.flows.grok, normalized.flows.openai);
       }
+      if (normalized.flows.cline) {
+        normalized.flows.cline = normalizeClineSettings(input, defaults, normalized.flows.cline);
+      }
       return normalized;
     }
 
@@ -964,6 +994,7 @@
       const openaiState = normalizedState.flows.openai || buildDefaultFlowSettings('openai');
       const kiroState = normalizedState.flows.kiro || buildDefaultFlowSettings('kiro');
       const grokState = normalizedState.flows.grok || buildDefaultFlowSettings('grok');
+      const clineState = normalizedState.flows.cline || buildDefaultFlowSettings('cline');
       next.activeFlowId = normalizedState.activeFlowId;
       next.uiLanguage = normalizedState.ui?.language || 'auto';
       next.targetId = getSelectedTargetId(normalizedState, normalizedState.activeFlowId);
@@ -1017,6 +1048,11 @@
       next.grokSub2apiGrok2ApiUploadEnabled = Boolean(
         grokState.targets.sub2api?.grok2apiUploadEnabled
       );
+      next.cline2apiBaseUrl = clineState.targets.cline2api?.baseUrl || '';
+      next.cline2apiAdminToken = clineState.targets.cline2api?.apiKey || '';
+      next.clineApiBase = clineState.apiBase || '';
+      next.clineAuxMailnestProjectCode = clineState.auxMailnestProjectCode || 'microsoft001';
+      next.clineAuxMailnestEmail = clineState.auxMailnestEmail || '';
       next.stepExecutionRangeByFlow = buildStepExecutionRangeByFlow(normalizedState);
       next.settingsSchemaVersion = normalizedState.schemaVersion;
       next.settingsState = cloneValue(normalizedState);

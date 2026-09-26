@@ -8,6 +8,8 @@ importScripts(
   'flows/kiro/workflow.js',
   'flows/grok/index.js',
   'flows/grok/workflow.js',
+  'flows/cline/index.js',
+  'flows/cline/workflow.js',
   'flows/index.js',
   'core/flow-kernel/flow-registry.js',
   'shared/contribution-registry.js',
@@ -52,6 +54,9 @@ importScripts(
   'flows/grok/background/publisher-webchat2api.js',
   'flows/grok/background/publisher-grok2api.js',
   'flows/grok/background/sub2api-oauth-runner.js',
+  'flows/cline/background/cline-client.js',
+  'flows/cline/background/register-runner.js',
+  'flows/cline/background/publisher-cline2api.js',
   'flows/openai/background/session-reader.js',
   'flows/openai/background/publisher-webchat.js',
   'flows/openai/background/publisher-chatgpt2api.js',
@@ -101,6 +106,9 @@ importScripts(
   'yyds-mail-utils.js',
   'background/yyds-mail-provider.js',
   'icloud-utils.js',
+  'icloud-hme-utils.js',
+  'background/icloud-hme-provider.js',
+  'background/mailnest-provider.js',
   'mail-provider-utils.js',
   'content/activation-utils.js'
 );
@@ -425,6 +433,10 @@ const CLOUDFLARE_TEMP_EMAIL_PROVIDER = 'cloudflare-temp-email';
 const CLOUDFLARE_TEMP_EMAIL_GENERATOR = 'cloudflare-temp-email';
 const CLOUD_MAIL_PROVIDER = 'cloudmail';
 const CLOUD_MAIL_GENERATOR = 'cloudmail';
+const ICLOUD_HME_PROVIDER = 'icloud-hme';
+const ICLOUD_HME_GENERATOR = 'icloud-hme';
+const MAILNEST_PROVIDER = 'mailnest';
+const MAILNEST_GENERATOR = 'mailnest';
 const YYDS_MAIL_GENERATOR = YYDS_MAIL_PROVIDER;
 const CUSTOM_EMAIL_POOL_GENERATOR = 'custom-pool';
 const HOTMAIL_MAILBOXES = ['INBOX', 'Junk'];
@@ -1073,6 +1085,11 @@ const PERSISTED_SETTING_DEFAULTS = {
   grokWebchat2ApiAdminKey: '',
   grok2ApiUrl: '',
   grok2ApiAdminKey: '',
+  cline2apiBaseUrl: '',
+  cline2apiAdminToken: '',
+  clineApiBase: '',
+  clineAuxMailnestProjectCode: 'microsoft001',
+  clineAuxMailnestEmail: '',
   openaiWebchatUrl: '',
   openaiWebchatAdminKey: '',
   openaiWebchatUploadEnabled: false,
@@ -1202,6 +1219,16 @@ const PERSISTED_SETTING_DEFAULTS = {
   cloudMailReceiveMailbox: '',
   cloudMailDomain: '',
   cloudMailDomains: [],
+  mailnestApiKey: '',
+  mailnestBaseUrl: '',
+  mailnestMode: 'temporary',
+  mailnestProjectCode: '',
+  mailnestWebUsername: '',
+  mailnestWebPassword: '',
+  mailnestAccountProductType: 'lweb_ocom_test',
+  icloudHmeBaseUrl: String(self.IcloudHmeUtils?.DEFAULT_ICLOUD_HME_BASE_URL || 'http://localhost:8081'),
+  icloudHmeAdminPassword: '',
+  icloudHmeAccountId: '',
   yydsMailApiKey: '',
   yydsMailBaseUrl: DEFAULT_YYDS_MAIL_BASE_URL,
   hotmailAccounts: [],
@@ -1296,6 +1323,12 @@ const SETTINGS_SCHEMA_VIEW_KEYS = Object.freeze([
   'openaiWebchatUploadEnabled',
   'openaiChatgpt2ApiUrl',
   'openaiChatgpt2ApiAdminKey',
+  'cline2apiBaseUrl',
+  'cline2apiAdminToken',
+  'clineApiBase',
+  'clineAuxMailnestProjectCode',
+  'clineAuxMailnestEmail',
+  'mailnestAccountProductType',
   'stepExecutionRangeByFlow',
 ]);
 const SETTINGS_SCHEMA_VIEW_KEY_SET = new Set(SETTINGS_SCHEMA_VIEW_KEYS);
@@ -1318,6 +1351,7 @@ const DEFAULT_STATE = {
   preservedAliases: {},
   icloudAliasCache: [],
   icloudAliasCacheAt: 0,
+  icloudHmeSession: null,
   logs: [], // 侧边栏展示的运行日志。
   ...PERSISTED_SETTING_DEFAULTS, // 合并 chrome.storage.local 中持久化保存的用户配置。
   luckmailApiKey: '',
@@ -2333,6 +2367,14 @@ function normalizeEmailGenerator(value = '') {
   if (normalized === 'icloud') {
     return 'icloud';
   }
+  const icloudHmeGenerator = typeof ICLOUD_HME_GENERATOR === 'string' ? ICLOUD_HME_GENERATOR : 'icloud-hme';
+  if (normalized === icloudHmeGenerator) {
+    return icloudHmeGenerator;
+  }
+  const mailnestGenerator = typeof MAILNEST_GENERATOR === 'string' ? MAILNEST_GENERATOR : 'mailnest';
+  if (normalized === mailnestGenerator) {
+    return mailnestGenerator;
+  }
   if (normalized === 'cloudflare') return 'cloudflare';
   if (normalized === CLOUDFLARE_TEMP_EMAIL_GENERATOR) return CLOUDFLARE_TEMP_EMAIL_GENERATOR;
   if (normalized === 'cloudmail') return 'cloudmail';
@@ -2541,6 +2583,20 @@ async function markCurrentRegistrationAccountUsed(state = {}, options = {}) {
   const icloudResult = await finalizeIcloudAliasAfterSuccessfulFlow(latestState);
   updated = Boolean(icloudResult?.handled) || updated;
 
+  if (String(latestState.mailProvider || '').trim().toLowerCase() === (typeof MAILNEST_PROVIDER === 'string' ? MAILNEST_PROVIDER : 'mailnest')
+    && typeof mailnestProvider?.normalizeMailnestMode === 'function'
+    && mailnestProvider.normalizeMailnestMode(latestState.mailnestMode) === 'temporary'
+    && typeof releaseMailnestEmail === 'function'
+    && latestState.email) {
+    try {
+      await releaseMailnestEmail({ email: latestState.email }, { state: latestState });
+      await addLog(`${reasonPrefix}：MailNest 临时邮箱 ${latestState.email} 已释放。`, options.level || 'warn');
+      updated = true;
+    } catch (err) {
+      await addLog(`${reasonPrefix}：MailNest 释放 ${latestState.email} 失败：${getErrorMessage(err)}`, 'warn');
+    }
+  }
+
   if (typeof markCurrentCustomEmailPoolEntryUsed === 'function') {
     const result = await markCurrentCustomEmailPoolEntryUsed(latestState, {
       logPrefix: `${reasonPrefix}：自定义邮箱池`,
@@ -2592,6 +2648,8 @@ function normalizeMailProvider(value = '') {
     case LUCKMAIL_PROVIDER:
     case CLOUDFLARE_TEMP_EMAIL_PROVIDER:
     case CLOUD_MAIL_PROVIDER:
+    case 'icloud-hme':
+    case typeof MAILNEST_PROVIDER === 'string' ? MAILNEST_PROVIDER : 'mailnest':
     case yydsMailProvider:
     case '163':
     case '163-vip':
@@ -2885,6 +2943,51 @@ const {
   pollCloudMailVerificationCode,
   resolveCloudMailPollTargetEmail,
 } = cloudMailProvider;
+const icloudHmeProvider = self.MultiPageBackgroundIcloudHmeProvider?.createIcloudHmeProvider?.({
+  addLog,
+  chrome,
+  fetchImpl: typeof fetch === 'function' ? fetch.bind(globalThis) : null,
+  getEffectiveUsedEmails,
+  getPreservedAliasMap,
+  getState,
+  ICLOUD_HME_GENERATOR,
+  ICLOUD_HME_PROVIDER,
+  normalizeIcloudFetchMode,
+  persistRegistrationEmailState,
+  pickVerificationMessageWithTimeFallback,
+  setEmailState,
+  setState,
+  sleepWithStop,
+  throwIfStopped,
+});
+const {
+  clearIcloudHmeSession,
+  deleteIcloudHmeAlias,
+  fetchIcloudHmeAddress,
+  listIcloudHmeAccounts,
+  listIcloudHmeAliases,
+  pollIcloudHmeVerificationCode,
+  testIcloudHmeConnection,
+} = icloudHmeProvider || {};
+const mailnestProvider = self.MultiPageBackgroundMailnestProvider?.createMailnestProvider?.({
+  addLog,
+  fetchImpl: typeof fetch === 'function' ? fetch.bind(globalThis) : null,
+  getState,
+  persistRegistrationEmailState,
+  pickVerificationMessageWithTimeFallback,
+  setEmailState,
+  setState,
+  sleepWithStop,
+  throwIfStopped,
+});
+const {
+  fetchMailnestAddress,
+  getMailnestBalance,
+  listMailnestProducts,
+  pollMailnestVerificationCode,
+  releaseMailnestEmail,
+  testMailnestConnection,
+} = mailnestProvider || {};
 const yydsMailProvider = self.MultiPageBackgroundYydsMailProvider.createYydsMailProvider({
   addLog,
   buildYydsMailHeaders,
@@ -3035,12 +3138,20 @@ function normalizePersistentSettingValue(key, value) {
     case 'grok2ApiUrl':
     case 'openaiWebchatUrl':
     case 'openaiChatgpt2ApiUrl':
+    case 'cline2apiBaseUrl':
+    case 'clineApiBase':
+    case 'clineAuxMailnestProjectCode':
+    case 'mailnestWebUsername':
+    case 'mailnestAccountProductType':
       return String(value || '').trim();
+    case 'clineAuxMailnestEmail':
+      return String(value || '').trim().toLowerCase();
     case 'kiroRsKey':
     case 'grokWebchat2ApiAdminKey':
     case 'grok2ApiAdminKey':
     case 'openaiWebchatAdminKey':
     case 'openaiChatgpt2ApiAdminKey':
+    case 'cline2apiAdminToken':
       return String(value || '').trim();
     case 'openaiWebchatUploadEnabled':
       return Boolean(value);
@@ -3306,6 +3417,27 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeCloudMailDomain(value);
     case 'cloudMailDomains':
       return normalizeCloudMailDomains(value);
+    case 'mailnestApiKey':
+      return String(value || '');
+    case 'mailnestBaseUrl':
+      return self.MultiPageBackgroundMailnestProvider?.normalizeMailnestBaseUrl?.(value) || String(value || '').trim();
+    case 'mailnestMode':
+      return self.MultiPageBackgroundMailnestProvider?.normalizeMailnestMode?.(value) || 'temporary';
+    case 'mailnestProjectCode':
+      return String(value || '').trim();
+    case 'mailnestWebPassword':
+      return String(value || '');
+    case 'mailnestWebUsername':
+    case 'mailnestAccountProductType':
+      return String(value || '').trim();
+    case 'clineAuxMailnestEmail':
+      return String(value || '').trim().toLowerCase();
+    case 'icloudHmeBaseUrl':
+      return self.IcloudHmeUtils?.normalizeIcloudHmeBaseUrl?.(value) || String(value || '').trim();
+    case 'icloudHmeAdminPassword':
+      return String(value || '');
+    case 'icloudHmeAccountId':
+      return String(value || '').trim();
     case 'yydsMailApiKey':
       return normalizeYydsMailApiKey(value);
     case 'yydsMailBaseUrl':
@@ -3740,6 +3872,8 @@ function buildSettingsStatePatchFromFlatUpdates(updates = {}) {
   assignIfUpdated('kiroRsKey', ['flows', 'kiro', 'targets', 'kiro-rs', 'apiKey']);
   assignIfUpdated('grok2ApiUrl', ['flows', 'grok', 'targets', 'grok2api', 'baseUrl']);
   assignIfUpdated('grok2ApiAdminKey', ['flows', 'grok', 'targets', 'grok2api', 'apiKey']);
+  assignIfUpdated('cline2apiBaseUrl', ['flows', 'cline', 'targets', 'cline2api', 'baseUrl']);
+  assignIfUpdated('cline2apiAdminToken', ['flows', 'cline', 'targets', 'cline2api', 'apiKey']);
   if (hasUpdate('grokWebchat2ApiUrl') || hasUpdate('openaiWebchatUrl')) {
     const sharedWebchatUrl = hasUpdate('openaiWebchatUrl') ? updates.openaiWebchatUrl : updates.grokWebchat2ApiUrl;
     setSettingsStatePatchValue(patch, ['flows', 'openai', 'targets', 'webchat', 'baseUrl'], sharedWebchatUrl);
@@ -8587,7 +8721,11 @@ async function finalizeIcloudAliasAfterSuccessfulFlow(state) {
     return { handled: false, deleted: false };
   }
 
-  const knownIcloudAlias = normalizeEmailGenerator(state?.emailGenerator) === 'icloud'
+  const icloudHmeGeneratorId = typeof ICLOUD_HME_GENERATOR === 'string' ? ICLOUD_HME_GENERATOR : 'icloud-hme';
+  const normalizedGenerator = normalizeEmailGenerator(state?.emailGenerator);
+  const isIcloudHmeAlias = normalizedGenerator === icloudHmeGeneratorId;
+  const knownIcloudAlias = normalizedGenerator === 'icloud'
+    || isIcloudHmeAlias
     || Object.prototype.hasOwnProperty.call(getManualAliasUsageMap(state), email)
     || Object.prototype.hasOwnProperty.call(getPreservedAliasMap(state), email);
   if (!knownIcloudAlias) {
@@ -8607,7 +8745,9 @@ async function finalizeIcloudAliasAfterSuccessfulFlow(state) {
   }
 
   try {
-    const aliases = await listIcloudAliases();
+    const aliases = isIcloudHmeAlias
+      ? (await listIcloudHmeAliases(state))?.aliases || []
+      : await listIcloudAliases();
     const alias = findIcloudAliasByEmail(aliases, email);
     if (!alias) {
       await addLog(`iCloud：自动删除跳过，列表中未找到 ${email}。`, 'warn');
@@ -8621,7 +8761,11 @@ async function finalizeIcloudAliasAfterSuccessfulFlow(state) {
       await addLog(`iCloud：自动删除跳过，${email} 缺少 anonymousId，请先刷新列表后重试。`, 'warn');
       return { handled: true, deleted: false };
     }
-    await deleteIcloudAlias(alias);
+    if (isIcloudHmeAlias) {
+      await deleteIcloudHmeAlias({ email, anonymousId: alias.anonymousId }, { state });
+    } else {
+      await deleteIcloudAlias(alias);
+    }
     await addLog(`iCloud：流程成功后已自动删除 ${email}。`, 'ok');
     return { handled: true, deleted: true };
   } catch (err) {
@@ -10920,6 +11064,10 @@ async function handleNodeData(nodeId, payload) {
     }
     return;
   }
+  // cline 各步骤运行数据由 register-runner/publisher 自行写入 runtimeState.flowState.cline，不走 openai 数字步骤语义。
+  if (String(nodeDefinition?.flowId || '').trim().toLowerCase() === 'cline') {
+    return;
+  }
   const step = getStepIdByNodeIdForState(nodeId, state);
   if (!Number.isInteger(step) || step <= 0) {
     return;
@@ -10988,6 +11136,11 @@ const AUTO_RUN_BACKGROUND_COMPLETED_STEP_KEYS = new Set([
   'grok-upload-sso-to-grok2api',
   'grok-start-sub2api-oauth',
   'grok-complete-sub2api-oauth',
+  'cline-prepare-account',
+  'cline-open-authorize',
+  'cline-drive-login',
+  'cline-exchange-token',
+  'cline-upload-credential',
 ]);
 const STEP_COMPLETION_SIGNAL_STEP_KEYS = new Set([
   'fill-password',
@@ -11929,6 +12082,8 @@ function getEmailGeneratorLabel(generator) {
   if (generator === 'icloud') {
     return 'iCloud 隐私邮箱';
   }
+  if (generator === (typeof ICLOUD_HME_GENERATOR === 'string' ? ICLOUD_HME_GENERATOR : 'icloud-hme')) return 'iCloud HME';
+  if (generator === (typeof MAILNEST_GENERATOR === 'string' ? MAILNEST_GENERATOR : 'mailnest')) return 'MailNest';
   if (generator === 'cloudflare') return 'Cloudflare 邮箱';
   if (generator === CLOUDFLARE_TEMP_EMAIL_GENERATOR) return 'Cloudflare Temp Email';
   if (generator === CLOUD_MAIL_GENERATOR) return 'Cloud Mail';
@@ -12127,12 +12282,21 @@ async function fetchGeneratedEmail(state, options = {}) {
   if (requestedMailProvider === yydsMailProvider) {
     return fetchYydsMailAddress(currentState, options);
   }
+  if (requestedMailProvider === (typeof MAILNEST_PROVIDER === 'string' ? MAILNEST_PROVIDER : 'mailnest')) {
+    return fetchMailnestAddress(currentState, options);
+  }
   const generator = normalizeEmailGenerator(options.generator ?? currentState.emailGenerator);
   if (generator === yydsMailGenerator) {
     return fetchYydsMailAddress(currentState, options);
   }
   if (generator === CLOUD_MAIL_GENERATOR) {
     return fetchCloudMailAddress(currentState, options);
+  }
+  if (generator === (typeof ICLOUD_HME_GENERATOR === 'string' ? ICLOUD_HME_GENERATOR : 'icloud-hme')) {
+    return fetchIcloudHmeAddress(currentState, options);
+  }
+  if (generator === (typeof MAILNEST_GENERATOR === 'string' ? MAILNEST_GENERATOR : 'mailnest')) {
+    return fetchMailnestAddress(currentState, options);
   }
   return generatedEmailHelpers.fetchGeneratedEmail(state, options);
 }
@@ -12519,6 +12683,10 @@ function shouldStopEmailAutoFetchRetries(generator, error) {
   }
   const message = String(error?.message || '');
   if (generator === 'cloudflare' && /域名/.test(message)) {
+    return true;
+  }
+  if (generator === (typeof MAILNEST_GENERATOR === 'string' ? MAILNEST_GENERATOR : 'mailnest')
+    && /(API Key|项目代码|余额|服务地址)/.test(message)) {
     return true;
   }
   return generator === CLOUDFLARE_TEMP_EMAIL_GENERATOR && /(服务地址|Admin Auth|域名)/.test(message);
@@ -13421,6 +13589,7 @@ const KIRO_REGISTER_INJECT_FILES = ['flows/openai/index.js', 'flows/kiro/index.j
 const KIRO_DESKTOP_AUTHORIZE_INJECT_FILES = ['flows/openai/index.js', 'flows/kiro/index.js', 'flows/grok/index.js', 'flows/index.js', 'core/flow-kernel/flow-registry.js', 'core/flow-kernel/source-registry.js', 'shared/kiro-timeouts.js', 'content/utils.js', 'flows/kiro/content/desktop-authorize-page.js'];
 const GROK_REGISTER_INJECT_FILES = ['flows/openai/index.js', 'flows/kiro/index.js', 'flows/grok/index.js', 'flows/index.js', 'core/flow-kernel/flow-registry.js', 'core/flow-kernel/source-registry.js', 'content/utils.js', 'flows/grok/content/register-page.js'];
 const GROK_SUB2API_OAUTH_INJECT_FILES = ['flows/openai/index.js', 'flows/kiro/index.js', 'flows/grok/index.js', 'flows/index.js', 'core/flow-kernel/flow-registry.js', 'core/flow-kernel/source-registry.js', 'content/utils.js', 'flows/grok/content/sub2api-oauth-page.js'];
+const CLINE_MS_LOGIN_INJECT_FILES = ['flows/openai/index.js', 'flows/kiro/index.js', 'flows/grok/index.js', 'flows/cline/index.js', 'flows/index.js', 'core/flow-kernel/flow-registry.js', 'core/flow-kernel/source-registry.js', 'content/utils.js', 'flows/cline/content/microsoft-login.js'];
 const panelBridge = self.MultiPageBackgroundPanelBridge?.createPanelBridge({
   chrome,
   addLog,
@@ -13509,15 +13678,19 @@ const flowMailPollingService = self.MultiPageBackgroundFlowMailPolling?.createFl
   getTabId,
   handleMail2925LimitReachedError,
   HOTMAIL_PROVIDER,
+  ICLOUD_HME_PROVIDER,
   isMail2925LimitReachedError,
   isStopError,
   isTabAlive,
   LUCKMAIL_PROVIDER,
+  MAILNEST_PROVIDER,
   pollCloudflareTempEmailVerificationCode,
   pollCloudMailVerificationCode,
   pollCustomMailVerificationCode,
   pollHotmailVerificationCode,
+  pollIcloudHmeVerificationCode,
   pollLuckmailVerificationCode,
+  pollMailnestVerificationCode,
   pollYydsMailVerificationCode,
   reuseOrCreateTab,
   sendToMailContentScriptResilient,
@@ -13545,10 +13718,12 @@ const verificationFlowHelpers = self.MultiPageBackgroundVerificationFlow?.create
   getState,
   getTabId,
   HOTMAIL_PROVIDER,
+  ICLOUD_HME_PROVIDER,
   isMail2925LimitReachedError,
   isRetryableContentScriptTransportError,
   isStopError,
   LUCKMAIL_PROVIDER,
+  MAILNEST_PROVIDER,
   YYDS_MAIL_PROVIDER,
   MAIL_2925_VERIFICATION_INTERVAL_MS,
   MAIL_2925_VERIFICATION_MAX_ATTEMPTS,
@@ -13556,7 +13731,9 @@ const verificationFlowHelpers = self.MultiPageBackgroundVerificationFlow?.create
   pollCloudMailVerificationCode,
   pollCustomMailVerificationCode,
   pollHotmailVerificationCode,
+  pollIcloudHmeVerificationCode,
   pollLuckmailVerificationCode,
+  pollMailnestVerificationCode,
   pollYydsMailVerificationCode,
   sendToContentScript,
   sendToContentScriptResilient,
@@ -14018,6 +14195,37 @@ const grokSub2ApiOAuthRunner = self.MultiPageBackgroundGrokSub2ApiOAuthRunner?.c
   waitForTabStableComplete,
   GROK_SUB2API_OAUTH_INJECT_FILES,
 });
+const clineRegisterRunner = self.MultiPageBackgroundClineRegisterRunner?.createClineRegisterRunner({
+  addLog,
+  chrome,
+  completeNodeFromBackground,
+  ensureContentScriptReadyOnTab,
+  fetchImpl: typeof fetch === 'function' ? fetch.bind(globalThis) : null,
+  getState,
+  getTabId,
+  isTabAlive,
+  mailnestProvider,
+  normalizeHotmailAccounts,
+  pickHotmailAccountForRun,
+  registerTab,
+  reuseOrCreateTab,
+  sendToContentScriptResilient,
+  setCurrentHotmailAccount,
+  setEmailState,
+  setState,
+  sleepWithStop,
+  throwIfStopped,
+  upsertHotmailAccount,
+  waitForTabStableComplete,
+  CLINE_MS_LOGIN_INJECT_FILES,
+});
+const cline2ApiPublisher = self.MultiPageBackgroundClinePublisher?.createCline2ApiPublisher({
+  addLog,
+  completeNodeFromBackground,
+  fetchImpl: typeof fetch === 'function' ? fetch.bind(globalThis) : null,
+  getState,
+  setState,
+});
 const openAiWebchatPublisher = self.MultiPageBackgroundOpenAiPublisherWebchat?.createOpenAiWebchatPublisher({
   addLog,
   broadcastDataUpdate,
@@ -14155,6 +14363,11 @@ const stepExecutorsByKey = {
   'grok-upload-sso-to-grok2api': (state) => grok2ApiPublisher.executeGrokUploadSsoToGrok2Api(state),
   'grok-start-sub2api-oauth': (state) => grokSub2ApiOAuthRunner.executeGrokStartSub2ApiOAuth(state),
   'grok-complete-sub2api-oauth': (state) => grokSub2ApiOAuthRunner.executeGrokCompleteSub2ApiOAuth(state),
+  'cline-prepare-account': (state) => clineRegisterRunner.executeClinePrepareAccount(state),
+  'cline-open-authorize': (state) => clineRegisterRunner.executeClineOpenAuthorize(state),
+  'cline-drive-login': (state) => clineRegisterRunner.executeClineDriveLogin(state),
+  'cline-exchange-token': (state) => clineRegisterRunner.executeClineExchangeToken(state),
+  'cline-upload-credential': (state) => cline2ApiPublisher.executeClineUploadCredential(state),
 };
 const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter({
   addLog,
@@ -14265,6 +14478,14 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   clearIpProxyAutoSyncAlarm,
   runIpProxyAutoSync,
   listIcloudAliases,
+  listIcloudHmeAccounts: async (overrides = {}) => {
+    const currentState = await getState();
+    return icloudHmeProvider.listIcloudHmeAccounts(currentState, overrides);
+  },
+  listMailnestProducts,
+  testCline2ApiConnection: cline2ApiPublisher?.testCline2ApiConnection,
+  testIcloudHmeConnection,
+  testMailnestConnection,
   listLuckmailPurchasesForManagement,
   markCurrentCustomEmailPoolEntryUsed,
   markCurrentRegistrationAccountUsed,
@@ -14505,6 +14726,12 @@ function getMailConfig(state) {
   }
   if (provider === 'cloudmail') {
     return { provider: 'cloudmail', label: 'Cloud Mail' };
+  }
+  if (provider === 'icloud-hme') {
+    return { provider: 'icloud-hme', label: 'iCloud HME（自建服务）' };
+  }
+  if (provider === (typeof MAILNEST_PROVIDER === 'string' ? MAILNEST_PROVIDER : 'mailnest')) {
+    return { provider: 'mailnest', label: 'MailNest（迈巢接码）' };
   }
   if (provider === yydsMailProvider) {
     return { provider: yydsMailProvider, label: 'YYDS Mail' };

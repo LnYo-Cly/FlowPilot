@@ -51,6 +51,73 @@ test('OpenAI ChatGPT2API publisher builds token import payload', () => {
   );
 });
 
+test('OpenAI ChatGPT2API publisher builds accounts payload with registration credentials', () => {
+  const api = loadPublisherApi();
+
+  assert.deepEqual(api.buildOpenAiSessionImportPayload(
+    { accessToken: 'session-token' },
+    '',
+    { email: 'reg@example.com', password: 'reg-password' }
+  ), {
+    accounts: [{
+      access_token: 'session-token',
+      email: 'reg@example.com',
+      password: 'reg-password',
+    }],
+  });
+
+  // 缺邮箱或密码时回退 tokens 形态
+  assert.deepEqual(api.buildOpenAiSessionImportPayload(
+    { accessToken: 'session-token' },
+    '',
+    { email: 'reg@example.com', password: '' }
+  ), { tokens: ['session-token'] });
+  assert.deepEqual(api.buildOpenAiSessionImportPayload(
+    { accessToken: 'session-token' },
+    '',
+    { email: '', password: 'reg-password' }
+  ), { tokens: ['session-token'] });
+
+  assert.deepEqual(api.resolveOpenAiRegistrationCredentials({
+    email: ' reg@example.com ',
+    password: 'reg-password',
+    customPassword: 'ignored',
+  }), { email: 'reg@example.com', password: 'reg-password' });
+  assert.deepEqual(api.resolveOpenAiRegistrationCredentials({
+    email: 'reg@example.com',
+    password: '',
+    customPassword: 'custom-password',
+  }), { email: 'reg@example.com', password: 'custom-password' });
+});
+
+test('OpenAI ChatGPT2API publisher posts account credentials with bearer admin key', async () => {
+  const api = loadPublisherApi();
+  const requests = [];
+
+  await api.uploadOpenAiSessionToChatgpt2Api(
+    'https://remote.example.com/admin/deep/path',
+    ' admin-secret ',
+    {
+      session: { accessToken: 'session-token' },
+      accessToken: 'session-token',
+    },
+    async (url, options = {}) => {
+      requests.push({ url, body: JSON.parse(options.body) });
+      return createJsonResponse({ added: 1, skipped: 0, errors: [] });
+    },
+    { email: 'reg@example.com', password: 'reg-password' }
+  );
+
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0].body, {
+    accounts: [{
+      access_token: 'session-token',
+      email: 'reg@example.com',
+      password: 'reg-password',
+    }],
+  });
+});
+
 test('OpenAI ChatGPT2API publisher posts tokens with bearer admin key', async () => {
   const api = loadPublisherApi();
   const requests = [];
@@ -118,6 +185,8 @@ test('OpenAI ChatGPT2API executor reads latest state and writes upload status wi
   let liveState = {
     openaiChatgpt2ApiUrl: '',
     openaiChatgpt2ApiAdminKey: '',
+    email: 'registered@example.com',
+    password: 'registered-password',
     settingsState: {
       flows: {
         openai: {
@@ -179,7 +248,13 @@ test('OpenAI ChatGPT2API executor reads latest state and writes upload status wi
   assert.equal(requests.length, 1);
   assert.equal(requests[0].url, 'https://remote.example.com/api/accounts');
   assert.equal(requests[0].authorization, 'Bearer live-admin-key');
-  assert.deepEqual(requests[0].body, { tokens: ['live-session-token'] });
+  assert.deepEqual(requests[0].body, {
+    accounts: [{
+      access_token: 'live-session-token',
+      email: 'registered@example.com',
+      password: 'registered-password',
+    }],
+  });
   assert.equal(sessionReadCalls.length, 1);
   assert.deepEqual(sessionReadCalls[0].options, {
     visibleStep: 7,
@@ -193,7 +268,12 @@ test('OpenAI ChatGPT2API executor reads latest state and writes upload status wi
   assert.equal(completed[0].payload.openaiChatgpt2ApiTargetUrl, 'https://remote.example.com/api/accounts');
   assert.equal(typeof completed[0].payload.openaiChatgpt2ApiUploadedAt, 'number');
   assert.equal(broadcasts.some((entry) => entry.openaiChatgpt2ApiUploadStatus === 'uploaded'), true);
-  assert.equal(logs.some(({ message }) => message.includes('live-session-token') || message.includes('live-admin-key')), false);
+  assert.equal(
+    logs.some(({ message }) => message.includes('live-session-token')
+      || message.includes('live-admin-key')
+      || message.includes('registered-password')),
+    false
+  );
   assert.equal(
     logs.some(({ message }) => message.includes('ChatGPT 会话已上传到 ChatGPT2API，状态：新增 1 个，跳过 0 个，刷新 1 个。')),
     true

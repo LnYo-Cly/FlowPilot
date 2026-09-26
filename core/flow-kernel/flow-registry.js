@@ -42,6 +42,7 @@
     'service-email': {
       id: 'service-email',
       label: '\u90ae\u7bb1\u670d\u52a1',
+      sectionIds: ['mail-service-section'],
     },
     'service-proxy': {
       id: 'service-proxy',

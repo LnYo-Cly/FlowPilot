@@ -141,6 +141,11 @@
       clearIpProxyAutoSyncAlarm,
       runIpProxyAutoSync,
       listIcloudAliases,
+      listIcloudHmeAccounts,
+      listMailnestProducts,
+      testCline2ApiConnection,
+      testIcloudHmeConnection,
+      testMailnestConnection,
       listLuckmailPurchasesForManagement,
       markCurrentCustomEmailPoolEntryUsed,
       markCurrentRegistrationAccountUsed,
@@ -2100,6 +2105,51 @@
           clearStopRequest();
           const aliases = await listIcloudAliases();
           return { ok: true, aliases };
+        }
+
+        case 'LIST_ICLOUD_HME_ACCOUNTS': {
+          clearStopRequest();
+          if (typeof listIcloudHmeAccounts !== 'function') {
+            return { ok: false, error: 'iCloud HME 模块未加载。' };
+          }
+          const hmeResult = await listIcloudHmeAccounts(message.payload || {});
+          return { ok: true, ...hmeResult };
+        }
+
+        case 'TEST_ICLOUD_HME_CONNECTION': {
+          clearStopRequest();
+          if (typeof testIcloudHmeConnection !== 'function') {
+            return { ok: false, error: 'iCloud HME 模块未加载。' };
+          }
+          const testResult = await testIcloudHmeConnection(message.payload || {});
+          return { ok: true, ...testResult };
+        }
+
+        case 'LIST_MAILNEST_PRODUCTS': {
+          clearStopRequest();
+          if (typeof listMailnestProducts !== 'function') {
+            return { ok: false, error: 'MailNest 模块未加载。' };
+          }
+          const products = await listMailnestProducts(message.payload || {});
+          return { ok: true, ...products };
+        }
+
+        case 'TEST_MAILNEST_CONNECTION': {
+          clearStopRequest();
+          if (typeof testMailnestConnection !== 'function') {
+            return { ok: false, error: 'MailNest 模块未加载。' };
+          }
+          const testResult = await testMailnestConnection(message.payload || {});
+          return { ok: true, ...testResult };
+        }
+
+        case 'TEST_CLINE2API_CONNECTION': {
+          clearStopRequest();
+          if (typeof testCline2ApiConnection !== 'function') {
+            return { ok: false, error: 'Cline 交付模块未加载。' };
+          }
+          const clineResult = await testCline2ApiConnection(message.payload || {});
+          return { ok: true, ...clineResult };
         }
 
         case 'SET_ICLOUD_ALIAS_USED_STATE': {

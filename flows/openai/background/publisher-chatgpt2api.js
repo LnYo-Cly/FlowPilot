@@ -110,17 +110,35 @@
     };
   }
 
-  function buildOpenAiSessionImportPayload(session = null, accessToken = '') {
+  function buildOpenAiSessionImportPayload(session = null, accessToken = '', credentials = null) {
     const token = cleanString(accessToken || session?.access_token || session?.accessToken);
     if (!token) {
       throw new Error('缺少 ChatGPT 会话 accessToken。');
+    }
+    const email = cleanString(credentials?.email);
+    const password = cleanString(credentials?.password);
+    if (email && password) {
+      return {
+        accounts: [{
+          access_token: token,
+          email,
+          password,
+        }],
+      };
     }
     return {
       tokens: [token],
     };
   }
 
-  async function uploadOpenAiSessionToChatgpt2Api(baseUrl, apiKey, sessionState = {}, fetchImpl) {
+  function resolveOpenAiRegistrationCredentials(state = {}) {
+    return {
+      email: cleanString(state?.email),
+      password: cleanString(state?.password || state?.customPassword),
+    };
+  }
+
+  async function uploadOpenAiSessionToChatgpt2Api(baseUrl, apiKey, sessionState = {}, fetchImpl, credentials = null) {
     const endpointUrl = buildChatgpt2ApiAccountsUrl(baseUrl);
     const normalizedApiKey = normalizeChatgpt2ApiAdminKey(apiKey);
     if (!normalizedApiKey) {
@@ -136,7 +154,8 @@
       },
       body: JSON.stringify(buildOpenAiSessionImportPayload(
         isPlainObject(sessionState?.session) ? sessionState.session : null,
-        sessionState?.accessToken
+        sessionState?.accessToken,
+        credentials
       )),
     });
     const body = await readResponse(response);
@@ -254,7 +273,8 @@
           targetConfig.baseUrl,
           apiKey,
           sessionState,
-          fetchImpl
+          fetchImpl,
+          resolveOpenAiRegistrationCredentials(currentState)
         );
         const payload = await setUploadState({
           status: 'uploaded',
@@ -287,6 +307,7 @@
     buildOpenAiSessionImportPayload,
     createOpenAiChatgpt2ApiPublisher,
     normalizeChatgpt2ApiBaseUrl,
+    resolveOpenAiRegistrationCredentials,
     uploadOpenAiSessionToChatgpt2Api,
   };
 });

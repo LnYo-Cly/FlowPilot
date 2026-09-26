@@ -110,6 +110,7 @@
           <option value="openai" selected>Codex / OpenAI</option>
           <option value="kiro">Kiro</option>
           <option value="grok">Grok</option>
+          <option value="cline">Cline</option>
         </select>
       </div>
       <div class="data-row" id="row-source-selector">
@@ -380,6 +381,33 @@
         <span class="data-label">上传状态</span>
         <span id="display-kiro-upload-status" class="data-value mono">未开始</span>
       </div>
+      <div class="data-row" id="row-cline2api-url" style="display:none;">
+        <span class="data-label">cline2api</span>
+        <input type="text" id="input-cline2api-url" class="data-input"
+          placeholder="请输入 cline2api 网关地址，例如 http://localhost:3000" />
+      </div>
+      <div class="data-row" id="row-cline2api-token" style="display:none;">
+        <span class="data-label">管理令牌</span>
+        <div class="data-inline">
+          <div class="input-with-icon">
+            <input type="password" id="input-cline2api-token" class="data-input data-input-with-icon"
+              placeholder="请输入 cline2api ADMIN_TOKEN" />
+            <button id="btn-toggle-cline2api-token" class="input-icon-btn" type="button"
+              data-password-toggle="input-cline2api-token" data-show-label="显示 cline2api 管理令牌"
+              data-hide-label="隐藏 cline2api 管理令牌" aria-label="显示 cline2api 管理令牌"
+              title="显示 cline2api 管理令牌"></button>
+          </div>
+          <button id="btn-test-cline2api" class="btn btn-ghost btn-xs data-inline-btn" type="button">测试</button>
+        </div>
+      </div>
+      <div class="data-row" id="row-cline2api-test-status" style="display:none;">
+        <span class="data-label">连接测试</span>
+        <span id="display-cline2api-test-status" class="data-value mono">未测试</span>
+      </div>
+      <div class="data-row" id="row-cline-account-hint" style="display:none;">
+        <span class="data-label">账号来源</span>
+        <span id="display-cline-account-hint" class="data-value">Hotmail 号池（邮箱+密码）；号池为空且配置 MailNest 网站账号时自动购买长效网页号；安全验证自动买 MailNest 临时邮箱或走 clientId+refreshToken 辅助号</span>
+      </div>
       <div class="data-row" id="row-grok-webchat2api-url" style="display:none;">
         <span class="data-label">webchat</span>
         <input type="text" id="input-grok-webchat2api-url" class="data-input"
@@ -498,24 +526,33 @@
           <span class="setting-caption">支付成功页出现后再继续账号接入</span>
         </div>
       </div>
+      <div id="mail-service-section">
       <div class="data-row module-divider-start" id="row-mail-provider">
         <span class="data-label">邮箱服务</span>
         <div class="data-inline">
           <select id="select-mail-provider" class="data-select">
-            <option value="custom">自定义邮箱</option>
-            <option value="hotmail-api">Hotmail（账号池）</option>
-            <option value="luckmail-api">LuckMail（API 购邮）</option>
-            <option value="yyds-mail">YYDS Mail</option>
-            <option value="icloud">iCloud 邮箱</option>
-            <option value="163">163 邮箱 (mail.163.com) 版本老旧，请自行维护使用</option>
-            <option value="163-vip">163 VIP 邮箱 (vip.163.com) 版本老旧，请自行维护使用</option>
-            <option value="126">126 邮箱 (mail.126.com) 版本老旧，请自行维护使用</option>
-            <option value="qq">QQ 邮箱 (wx.mail.qq.com) 版本老旧，请自行维护使用</option>
-            <option value="inbucket">Inbucket（自定义主机）</option>
-            <option value="2925">2925 邮箱 (2925.com)（推荐）</option>
-            <option value="gmail">Gmail 邮箱 (mail.google.com)</option>
-            <option value="cloudflare-temp-email">Cloudflare Temp Email（推荐）</option>
-            <option value="cloudmail">Cloud Mail</option>
+            <optgroup label="接码平台">
+              <option value="cloudflare-temp-email">Cloudflare Temp Email（推荐）</option>
+              <option value="mailnest">MailNest（迈巢接码平台）</option>
+              <option value="2925">2925 邮箱 (2925.com)（推荐）</option>
+              <option value="luckmail-api">LuckMail（API 购邮）</option>
+              <option value="yyds-mail">YYDS Mail</option>
+              <option value="inbucket">Inbucket（自定义主机）</option>
+            </optgroup>
+            <optgroup label="账号池 / 自有邮箱">
+              <option value="hotmail-api">Hotmail（账号池）</option>
+              <option value="icloud">iCloud 邮箱</option>
+              <option value="icloud-hme">iCloud HME（自建服务）</option>
+              <option value="gmail">Gmail 邮箱 (mail.google.com)</option>
+              <option value="cloudmail">Cloud Mail</option>
+              <option value="custom">自定义邮箱</option>
+            </optgroup>
+            <optgroup label="旧版（请自行维护使用）">
+              <option value="163">163 邮箱 (mail.163.com)</option>
+              <option value="163-vip">163 VIP 邮箱 (vip.163.com)</option>
+              <option value="126">126 邮箱 (mail.126.com)</option>
+              <option value="qq">QQ 邮箱 (wx.mail.qq.com)</option>
+            </optgroup>
           </select>
           <button id="btn-mail-login" class="btn btn-outline btn-sm data-inline-btn" type="button" disabled>登录</button>
         </div>
@@ -547,13 +584,19 @@
       <div class="data-row" id="row-email-generator">
         <span class="data-label">邮箱生成</span>
         <select id="select-email-generator" class="data-select">
-          <option value="gmail-alias">Gmail +tag</option>
-          <option value="duck">DuckDuckGo</option>
-          <option value="custom-pool">自定义邮箱池</option>
-          <option value="cloudflare">Cloudflare</option>
-          <option value="icloud">iCloud 隐私邮箱</option>
-          <option value="cloudflare-temp-email">Cloudflare Temp Email（推荐）</option>
-          <option value="cloudmail">Cloud Mail</option>
+          <optgroup label="接码平台邮箱">
+            <option value="mailnest">MailNest（迈巢接码平台）</option>
+            <option value="cloudflare-temp-email">Cloudflare Temp Email（推荐）</option>
+            <option value="cloudmail">Cloud Mail</option>
+          </optgroup>
+          <optgroup label="别名 / 自有池">
+            <option value="gmail-alias">Gmail +tag</option>
+            <option value="duck">DuckDuckGo</option>
+            <option value="cloudflare">Cloudflare</option>
+            <option value="icloud">iCloud 隐私邮箱</option>
+            <option value="icloud-hme">iCloud HME（自建服务）</option>
+            <option value="custom-pool">自定义邮箱池</option>
+          </optgroup>
         </select>
       </div>
       <div class="data-row" id="row-duck-ddg-token" style="display:none;">
@@ -664,6 +707,7 @@
       <div class="data-row" id="row-inbucket-mailbox" style="display:none;">
         <span class="data-label">邮箱名</span>
         <input type="text" id="input-inbucket-mailbox" class="data-input" placeholder="例如 zju2001" />
+      </div>
       </div>
       <div class="data-row" id="row-auto-run-controls">
         <span class="data-label">注册邮箱</span>
@@ -1213,6 +1257,111 @@
         </div>
         <div id="icloud-list" class="icloud-list"></div>
       </div>
+    </div>
+    <div id="icloud-hme-section" class="data-card hotmail-card" style="display:none;">
+      <div class="section-mini-header">
+        <div class="section-mini-copy">
+          <span class="section-label">iCloud HME（自建服务）</span>
+          <span class="data-value">连接 icloud-hme 服务生成隐私邮箱别名并收取验证码</span>
+        </div>
+        <div class="section-mini-actions">
+          <button id="btn-icloud-hme-refresh-accounts" class="btn btn-ghost btn-xs" type="button">刷新账号</button>
+        </div>
+      </div>
+      <div class="data-row" id="row-icloud-hme-base-url">
+        <span class="data-label">服务地址</span>
+        <input type="text" id="input-icloud-hme-base-url" class="data-input mono"
+          placeholder="http://localhost:8081" />
+      </div>
+      <div class="data-row" id="row-icloud-hme-admin-password">
+        <span class="data-label">管理员密码</span>
+        <div class="input-with-icon">
+          <input type="password" id="input-icloud-hme-admin-password"
+            class="data-input data-input-with-icon mono"
+            placeholder="服务端 ICLOUD_HME_ADMIN_PASSWORD" />
+          <button id="btn-toggle-icloud-hme-admin-password" class="input-icon-btn" type="button"
+            data-password-toggle="input-icloud-hme-admin-password" data-show-label="显示密码"
+            data-hide-label="隐藏密码" aria-label="显示密码" title="显示密码"></button>
+        </div>
+      </div>
+      <div class="data-row" id="row-icloud-hme-account">
+        <span class="data-label">iCloud 账号</span>
+        <select id="select-icloud-hme-account" class="data-select">
+          <option value="">自动选择（首个可用账号）</option>
+        </select>
+      </div>
+      <div class="data-row" id="row-icloud-hme-fetch-mode">
+        <span class="data-label">获取策略</span>
+        <select id="select-icloud-hme-fetch-mode" class="data-select">
+          <option value="reuse_existing">优先复用已有未用别名</option>
+          <option value="always_new">始终创建新别名</option>
+        </select>
+      </div>
+      <div id="icloud-hme-status" class="field-feedback field-feedback-muted"></div>
+    </div>
+    <div id="mailnest-section" class="data-card hotmail-card" style="display:none;">
+      <div class="section-mini-header">
+        <div class="section-mini-copy">
+          <span class="section-label">MailNest（迈巢）</span>
+          <span class="data-value">临时/独占邮箱、验证码提取、微软账号购买（mailnest.top API + 网站账号）</span>
+        </div>
+        <div class="section-mini-actions">
+          <button id="btn-mailnest-refresh-projects" class="btn btn-ghost btn-xs" type="button">拉取项目</button>
+          <button id="btn-mailnest-test-connection" class="btn btn-ghost btn-xs" type="button">测试连接</button>
+        </div>
+      </div>
+      <div class="data-row" id="row-mailnest-api-key">
+        <span class="data-label">API Key</span>
+        <div class="input-with-icon">
+          <input type="password" id="input-mailnest-api-key" class="data-input data-input-with-icon mono"
+            placeholder="sk_...（mailnest.top 账号页获取）" />
+          <button id="btn-toggle-mailnest-api-key" class="input-icon-btn" type="button"
+            data-password-toggle="input-mailnest-api-key" data-show-label="显示 API Key"
+            data-hide-label="隐藏 API Key" aria-label="显示 API Key" title="显示 API Key"></button>
+        </div>
+      </div>
+      <div class="data-row" id="row-mailnest-web-username">
+        <span class="data-label">网站账号</span>
+        <div class="data-inline">
+          <input type="text" id="input-mailnest-web-username" class="data-input mono"
+            placeholder="mailnest.top 登录用户名（购买微软账号用）" autocomplete="off" />
+        </div>
+      </div>
+      <div class="data-row" id="row-mailnest-web-password">
+        <span class="data-label">网站密码</span>
+        <div class="input-with-icon">
+          <input type="password" id="input-mailnest-web-password" class="data-input data-input-with-icon mono"
+            placeholder="购买账号走网站登录态，与 API Key 不同" />
+          <button id="btn-toggle-mailnest-web-password" class="input-icon-btn" type="button"
+            data-password-toggle="input-mailnest-web-password" data-show-label="显示密码"
+            data-hide-label="隐藏密码" aria-label="显示密码" title="显示密码"></button>
+        </div>
+      </div>
+      <div class="data-row" id="row-mailnest-aux-email">
+        <span class="data-label">辅助邮箱</span>
+        <div class="data-inline">
+          <input type="text" id="input-mailnest-aux-email" class="data-input mono"
+            placeholder="（可选）Cline 安全码固定接码邮箱，如独占邮箱地址" autocomplete="off" />
+        </div>
+      </div>
+      <div class="data-row" id="row-mailnest-mode">
+        <span class="data-label">邮箱类型</span>
+        <div id="mailnest-mode-group" class="choice-group" role="group" aria-label="MailNest 邮箱类型">
+          <button type="button" class="choice-btn" data-mailnest-mode="temporary"
+            title="按项目代码购买一次性邮箱，约 20 分钟有效">临时邮箱</button>
+          <button type="button" class="choice-btn" data-mailnest-mode="exclusive"
+            title="购买后可长期持有、接收任意发件人的邮件">独占邮箱</button>
+        </div>
+      </div>
+      <div class="data-row" id="row-mailnest-project">
+        <span class="data-label">项目代码</span>
+        <div class="data-inline">
+          <select id="select-mailnest-project" class="data-select">
+            <option value="">请先拉取项目列表</option>
+          </select>
+        </div>
+      </div>
+      <div id="mailnest-status" class="field-feedback field-feedback-muted"></div>
     </div>
     <div id="ip-proxy-section" class="data-card ip-proxy-card">
       <div class="section-mini-header">
@@ -2006,6 +2155,7 @@
   <script src="../phone-sms/providers/custom-url.js"></script>
   <script src="../phone-sms/providers/registry.js"></script>
   <script src="../icloud-utils.js"></script>
+  <script src="../icloud-hme-utils.js"></script>
   <script src="../mail-provider-utils.js"></script>
   <script src="../hotmail-utils.js"></script>
   <script src="../luckmail-utils.js"></script>
@@ -2017,6 +2167,8 @@
   <script src="../flows/kiro/workflow.js"></script>
   <script src="../flows/grok/index.js"></script>
   <script src="../flows/grok/workflow.js"></script>
+  <script src="../flows/cline/index.js"></script>
+  <script src="../flows/cline/workflow.js"></script>
   <script src="../flows/index.js"></script>
   <script src="../core/flow-kernel/flow-registry.js"></script>
   <script src="../shared/contribution-registry.js"></script>

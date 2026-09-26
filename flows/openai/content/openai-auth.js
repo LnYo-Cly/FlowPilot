@@ -611,6 +611,14 @@ const SIGNUP_SWITCH_TO_PHONE_PATTERN = new RegExp([
   String.raw`sign\s*(?:in|up)\s+with\s+(?:a\s+)?phone`,
 ].join('|'), 'i');
 const SIGNUP_MORE_OPTIONS_PATTERN = /更多选项|其它方式|其他方式|その他|他の方法|別の方法|もっと見る|オプション|more\s+options|show\s+more|other\s+(?:options|ways)/i;
+const SIGNUP_SWITCH_TO_PASSWORD_PATTERN = new RegExp([
+  String.raw`使用密码|使用密碼|用密码|改用密码|设置密码`,
+  String.raw`パスワードで(?:続行|続ける)?|パスワードを使用`,
+  String.raw`continue\s+(?:with|using)\s+(?:a\s+)?password`,
+  String.raw`use\s+(?:a\s+)?password(?:\s+instead)?`,
+  String.raw`sign\s*(?:in|up)\s+with\s+(?:a\s+)?password`,
+].join('|'), 'i');
+const SIGNUP_PASSWORD_ACTION_PATTERN = /密码|密碼|password|パスワード/i;
 const SIGNUP_WORK_EMAIL_PATTERN = /\u5de5\u4f5c|business|work\s+email/i;
 
 function getSignupEmailInput() {
@@ -682,6 +690,25 @@ function findSignupUsePhoneTrigger() {
     if (!text) return false;
     return SIGNUP_SWITCH_TO_PHONE_PATTERN.test(text)
       || (SIGNUP_SWITCH_ACTION_PATTERN.test(text) && SIGNUP_PHONE_ACTION_PATTERN.test(text));
+  }) || null;
+}
+
+// 「使用密码继续」：OTP 直达页上的备选入口，href 指向 /create-account/password。
+// 优先按 href 精确命中，退化为文案匹配。
+function findSignupUsePasswordTrigger() {
+  const byHref = Array.from(document.querySelectorAll('a[href]')).find((el) => {
+    if (!isVisibleElement(el) || !isActionEnabled(el)) return false;
+    const href = String(el.getAttribute('href') || '');
+    return /\/(?:create-account|u\/signup|signup)\/password/i.test(href);
+  });
+  if (byHref) return byHref;
+  const candidates = document.querySelectorAll('button, a, [role="button"], [role="link"]');
+  return Array.from(candidates).find((el) => {
+    if (!isVisibleElement(el) || !isActionEnabled(el)) return false;
+    const text = getActionText(el);
+    if (!text) return false;
+    return SIGNUP_SWITCH_TO_PASSWORD_PATTERN.test(text)
+      || (SIGNUP_SWITCH_ACTION_PATTERN.test(text) && SIGNUP_PASSWORD_ACTION_PATTERN.test(text));
   }) || null;
 }
 
@@ -1308,6 +1335,7 @@ async function ensureSignupPhoneEntryReady(timeout = 25000) {
 
 async function ensureSignupPasswordPageReady(timeout = 20000) {
   const start = Date.now();
+  let usePasswordClickedAt = 0;
 
   while (Date.now() - start < timeout) {
     throwIfStopped();
@@ -1318,6 +1346,16 @@ async function ensureSignupPasswordPageReady(timeout = 20000) {
         state: 'password_page',
         url: location.href,
       };
+    }
+    // 新版注册默认验证码直达：发现「使用密码继续」入口就点，扭回密码页。
+    // 节流 2.5s 防止 SPA 导航期间重复点击。
+    if (Date.now() - usePasswordClickedAt >= 2500) {
+      const usePasswordTrigger = findSignupUsePasswordTrigger();
+      if (usePasswordTrigger) {
+        usePasswordClickedAt = Date.now();
+        log('检测到「使用密码继续」入口，正在切换到密码页...');
+        simulateClick(usePasswordTrigger);
+      }
     }
     await sleep(200);
   }
@@ -2728,6 +2766,20 @@ async function step3_fillEmailPassword(payload) {
   let snapshot = inspectSignupEntryState();
   if (snapshot.state === 'entry_home') {
     throw new Error('当前仍停留在 ChatGPT 官网首页，请先完成步骤 2。');
+  }
+
+  // 新版注册默认验证码直达；优先点「使用密码继续」（指向 /create-account/password）
+  // 强制走密码分支，保证产出的账号带可登录密码。找不到该入口才退回原跳过逻辑。
+  if (snapshot.state === 'verification_page' || snapshot.state === 'phone_verification_page') {
+    const usePasswordTrigger = findSignupUsePasswordTrigger();
+    if (usePasswordTrigger) {
+      log('步骤 3：检测到验证码直达页，正在点击「使用密码继续」切换到密码注册...');
+      await performOperationWithDelay({ stepKey: 'fill-password', kind: 'click', label: 'signup-use-password' }, async () => {
+        simulateClick(usePasswordTrigger);
+      });
+      await ensureSignupPasswordPageReady(8000).catch(() => null);
+      snapshot = inspectSignupEntryState();
+    }
   }
 
   if (
