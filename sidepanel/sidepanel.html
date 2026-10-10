@@ -569,11 +569,6 @@
         <input type="text" id="input-custom-mail-helper-base-url" class="data-input"
           placeholder="http://127.0.0.1:17374" />
       </div>
-      <div class="data-row data-check-row" id="row-custom-mail-provider-pool" style="display:none;">
-        <span class="data-label">自定义号池</span>
-        <textarea id="input-custom-mail-provider-pool" class="data-textarea"
-          placeholder="每行一个注册邮箱，例如&#10;alias001@example.com&#10;alias002@example.com"></textarea>
-      </div>
       <div class="data-row" id="row-mail-2925-mode" style="display:none;">
         <span class="data-label">2925 模式</span>
         <div id="mail-2925-mode-group" class="choice-group" role="group" aria-label="2925 邮箱模式">
@@ -654,6 +649,9 @@
                 <button id="btn-custom-email-pool-bulk-enable" class="btn btn-outline btn-xs" type="button">启用</button>
                 <button id="btn-custom-email-pool-bulk-disable" class="btn btn-outline btn-xs" type="button">停用</button>
                 <button id="btn-custom-email-pool-bulk-delete" class="btn btn-outline btn-xs" type="button">删除</button>
+                <button id="btn-custom-email-pool-toggle-list" class="btn btn-outline btn-xs pool-toggle-btn" type="button" title="展开/收起邮箱列表">
+                  <span class="pool-toggle-icon">▾</span> 收起
+                </button>
               </div>
             </div>
             <div id="custom-email-pool-list" class="luckmail-list"></div>
@@ -1549,15 +1547,9 @@
           <span class="section-label">接码设置</span>
           <span class="data-value">手机号验证与接码服务商获取策略</span>
         </div>
-        <div id="row-phone-verification-enabled" class="section-mini-actions phone-verification-header-actions">
-          <button id="btn-toggle-phone-verification-section" class="btn btn-ghost btn-xs" type="button"
+        <div id="row-phone-verification-settings" class="section-mini-actions phone-verification-header-actions">
+          <button id="btn-toggle-phone-verification-settings" class="btn btn-ghost btn-xs" type="button"
             aria-expanded="false" aria-controls="row-phone-verification-fold">展开设置</button>
-          <label class="toggle-switch" for="input-phone-verification-enabled" title="启用或禁用手机号接码流程">
-            <input type="checkbox" id="input-phone-verification-enabled" />
-            <span class="toggle-switch-track" aria-hidden="true">
-              <span class="toggle-switch-thumb"></span>
-            </span>
-          </label>
         </div>
       </div>
       <div class="data-row phone-verification-fold-row" id="row-phone-verification-fold" style="display:none;">

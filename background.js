@@ -813,11 +813,6 @@ function buildResolvedStepDefinitionState(state = {}) {
     signupMethod: resolvedSignupMethod,
     resolvedSignupMethod: resolvedSignupMethod,
     phoneSignupReloginAfterBindEmailEnabled: Boolean(state?.phoneSignupReloginAfterBindEmailEnabled),
-    phoneVerificationEnabled: Boolean(
-      stepDefinitionOptions.phoneVerificationEnabled
-      ?? capabilityState?.runtimeLocks?.phoneVerificationEnabled
-      ?? state?.phoneVerificationEnabled
-    ),
     grokSub2apiGrok2ApiUploadEnabled: Boolean(
       stepDefinitionOptions.grokSub2apiGrok2ApiUploadEnabled
       ?? state?.grokSub2apiGrok2ApiUploadEnabled
@@ -839,7 +834,6 @@ function getStepDefinitionsForState(state = {}) {
       plusModeEnabled: false,
       plusPaymentMethod: normalizePlusPaymentMethod(resolvedState?.plusPaymentMethod),
       signupMethod: getSignupMethodForStepDefinitions(resolvedState),
-      phoneVerificationEnabled: Boolean(resolvedState?.phoneVerificationEnabled),
       phoneSignupReloginAfterBindEmailEnabled: Boolean(resolvedState?.phoneSignupReloginAfterBindEmailEnabled),
       grokSub2apiGrok2ApiUploadEnabled: Boolean(resolvedState?.grokSub2apiGrok2ApiUploadEnabled),
     });
@@ -1153,7 +1147,6 @@ const PERSISTED_SETTING_DEFAULTS = {
   autoStepDelaySeconds: null,
   step6CookieCleanupEnabled: false,
   stepExecutionRangeByFlow: {},
-  phoneVerificationEnabled: false,
   phoneSignupReloginAfterBindEmailEnabled: false,
   phoneSmsReuseEnabled: DEFAULT_HERO_SMS_REUSE_ENABLED,
   freePhoneReuseEnabled: true,
@@ -1174,8 +1167,6 @@ const PERSISTED_SETTING_DEFAULTS = {
   customMailHelperBaseUrl: DEFAULT_CUSTOM_MAIL_HELPER_BASE_URL,
   emailGenerator: 'duck',
   duckDdgToken: '',
-  customMailProviderPool: [],
-  customEmailPool: [],
   customEmailPoolEntries: [],
   autoDeleteUsedIcloudAlias: false,
   icloudHostPreference: 'auto',
@@ -1300,7 +1291,6 @@ const SETTINGS_SCHEMA_VIEW_KEYS = Object.freeze([
   'codex2apiAdminKey',
   'customPassword',
   'signupMethod',
-  'phoneVerificationEnabled',
   'phoneSignupReloginAfterBindEmailEnabled',
   'plusModeEnabled',
   'plusPaymentMethod',
@@ -1479,15 +1469,9 @@ function normalizePhoneVerificationReplacementLimit(value, fallback = DEFAULT_PH
   const rawValue = String(value ?? '').trim();
   const numeric = Number(rawValue);
   if (!rawValue || !Number.isFinite(numeric)) {
-    return Math.min(
-      PHONE_REPLACEMENT_LIMIT_MAX,
-      Math.max(PHONE_REPLACEMENT_LIMIT_MIN, Math.floor(Number(fallback) || DEFAULT_PHONE_VERIFICATION_REPLACEMENT_LIMIT))
-    );
+    return Math.max(PHONE_REPLACEMENT_LIMIT_MIN, Math.floor(Number(fallback) || DEFAULT_PHONE_VERIFICATION_REPLACEMENT_LIMIT));
   }
-  return Math.min(
-    PHONE_REPLACEMENT_LIMIT_MAX,
-    Math.max(PHONE_REPLACEMENT_LIMIT_MIN, Math.floor(numeric))
-  );
+  return Math.max(PHONE_REPLACEMENT_LIMIT_MIN, Math.floor(numeric));
 }
 
 function normalizePhoneCodeWaitSeconds(value, fallback = DEFAULT_PHONE_CODE_WAIT_SECONDS) {
@@ -1810,7 +1794,13 @@ function canUsePhoneSignup(state = {}) {
   if (capabilityState && typeof capabilityState.canUsePhoneSignup === 'boolean') {
     return capabilityState.canUsePhoneSignup;
   }
-  return Boolean(state?.phoneVerificationEnabled)
+  const activeFlowId = String(
+    state?.activeFlowId
+    || (typeof DEFAULT_ACTIVE_FLOW_ID === 'string' ? DEFAULT_ACTIVE_FLOW_ID : 'openai')
+  ).trim().toLowerCase();
+  const targetId = String(state?.targetId || 'cpa').trim().toLowerCase();
+  return activeFlowId === 'openai'
+    && !['webchat', 'chatgpt2api'].includes(targetId)
     && !Boolean(state?.plusModeEnabled)
     && !Boolean(state?.accountContributionEnabled);
 }
@@ -2396,16 +2386,6 @@ function normalizeIcloudFetchMode(value = '') {
   return normalized === 'always_new' ? 'always_new' : 'reuse_existing';
 }
 
-function normalizeCustomEmailPool(value = []) {
-  const source = Array.isArray(value)
-    ? value
-    : String(value || '').split(/[\r\n,，;；]+/);
-
-  return source
-    .map((item) => String(item || '').trim().toLowerCase())
-    .filter((item) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(item));
-}
-
 function normalizeCustomEmailPoolEntryObjects(value = []) {
   const source = Array.isArray(value) ? value : [];
   const seenEmails = new Set();
@@ -2447,34 +2427,17 @@ function isCustomEmailPoolGenerator(stateOrValue = {}) {
 }
 
 function getCustomEmailPool(state = {}) {
-  if (typeof normalizeCustomEmailPoolEntryObjects === 'function') {
-    const entries = normalizeCustomEmailPoolEntryObjects(state?.customEmailPoolEntries);
-    if (entries.length > 0) {
-      return entries
-        .filter((entry) => entry.enabled && !entry.used)
-        .map((entry) => entry.email);
-    }
-  }
-  return normalizeCustomEmailPool(state?.customEmailPool);
+  return normalizeCustomEmailPoolEntryObjects(state?.customEmailPoolEntries)
+    .filter((entry) => entry.enabled && !entry.used)
+    .map((entry) => entry.email);
 }
 
 function getCustomEmailPoolEntries(state = {}) {
-  const entries = normalizeCustomEmailPoolEntryObjects(state?.customEmailPoolEntries);
-  if (entries.length > 0) {
-    return entries;
-  }
-  return normalizeCustomEmailPool(state?.customEmailPool).map((email) => ({
-    id: `custom-pool-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
-    email,
-    enabled: true,
-    used: false,
-    note: '',
-    lastUsedAt: 0,
-  }));
+  return normalizeCustomEmailPoolEntryObjects(state?.customEmailPoolEntries);
 }
 
 async function markCurrentCustomEmailPoolEntryUsed(state = {}, options = {}) {
-  if (!isCustomEmailPoolGenerator(state)) {
+  if (!isCustomMailProvider(state) && !isCustomEmailPoolGenerator(state)) {
     return { updated: false };
   }
 
@@ -2509,27 +2472,20 @@ async function markCurrentCustomEmailPoolEntryUsed(state = {}, options = {}) {
     return { updated: false };
   }
 
-  const nextCustomEmailPool = nextEntries
-    .filter((entry) => entry.enabled && !entry.used)
-    .map((entry) => entry.email);
   await setPersistentSettings({
     customEmailPoolEntries: nextEntries,
-    customEmailPool: nextCustomEmailPool,
   });
   await setState({
     customEmailPoolEntries: nextEntries,
-    customEmailPool: nextCustomEmailPool,
   });
   broadcastDataUpdate({
     customEmailPoolEntries: nextEntries,
-    customEmailPool: nextCustomEmailPool,
   });
   const logPrefix = String(options.logPrefix || '').trim() || '自定义邮箱池：流程成功后';
   await addLog(`${logPrefix}已将 ${currentEmail} 标记为已用。`, options.level || 'ok');
   return {
     updated: true,
     customEmailPoolEntries: nextEntries,
-    customEmailPool: nextCustomEmailPool,
   };
 }
 
@@ -2610,16 +2566,6 @@ async function markCurrentRegistrationAccountUsed(state = {}, options = {}) {
 
 function getCustomEmailPoolEmailForRun(state = {}, targetRun = 1) {
   const entries = getCustomEmailPool(state);
-  const numericRun = Math.max(1, Math.floor(Number(targetRun) || 1));
-  return entries[numericRun - 1] || '';
-}
-
-function getCustomMailProviderPool(state = {}) {
-  return normalizeCustomEmailPool(state?.customMailProviderPool);
-}
-
-function getCustomMailProviderPoolEmailForRun(state = {}, targetRun = 1) {
-  const entries = getCustomMailProviderPool(state);
   const numericRun = Math.max(1, Math.floor(Number(targetRun) || 1));
   return entries[numericRun - 1] || '';
 }
@@ -3294,7 +3240,6 @@ function normalizePersistentSettingValue(key, value) {
       return Boolean(value);
     case 'stepExecutionRangeByFlow':
       return normalizeStepExecutionRangeByFlow(value);
-    case 'phoneVerificationEnabled':
     case 'phoneSignupReloginAfterBindEmailEnabled':
     case 'phoneSmsReuseEnabled':
     case 'freePhoneReuseEnabled':
@@ -3336,9 +3281,6 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeEmailGenerator(value);
     case 'duckDdgToken':
       return normalizeDuckDdgToken(value);
-    case 'customMailProviderPool':
-    case 'customEmailPool':
-      return normalizeCustomEmailPool(value);
     case 'customEmailPoolEntries':
       return normalizeCustomEmailPoolEntryObjects(value);
     case 'autoDeleteUsedIcloudAlias':
@@ -3654,8 +3596,7 @@ function buildPersistentSettingsPayload(input = {}, options = {}) {
     ...payload,
     resolvedSignupMethod: null,
   };
-  if (Object.prototype.hasOwnProperty.call(payload, 'phoneVerificationEnabled')
-    || Object.prototype.hasOwnProperty.call(payload, 'plusModeEnabled')
+  if (Object.prototype.hasOwnProperty.call(payload, 'plusModeEnabled')
     || Object.prototype.hasOwnProperty.call(payload, 'signupMethod')
     || Object.prototype.hasOwnProperty.call(payload, 'targetId')
     || Object.prototype.hasOwnProperty.call(payload, 'activeFlowId')) {
@@ -3844,7 +3785,6 @@ function buildSettingsStatePatchFromFlatUpdates(updates = {}) {
   assignIfUpdated('codex2apiAdminKey', ['flows', 'openai', 'targets', 'codex2api', 'codex2apiAdminKey']);
   assignIfUpdated('customPassword', ['services', 'account', 'customPassword']);
   assignIfUpdated('signupMethod', ['flows', 'openai', 'signup', 'signupMethod']);
-  assignIfUpdated('phoneVerificationEnabled', ['flows', 'openai', 'signup', 'phoneVerificationEnabled']);
   assignIfUpdated('phoneSignupReloginAfterBindEmailEnabled', ['flows', 'openai', 'signup', 'phoneSignupReloginAfterBindEmailEnabled']);
   if (hasUpdate('plusModeEnabled')) {
     setSettingsStatePatchValue(patch, ['flows', 'openai', 'plus', 'plusModeEnabled'], false);
@@ -4413,8 +4353,7 @@ async function importSettingsBundle(configBundle) {
     Object.assign(importedSettings, importModeValidation.normalizedUpdates);
   }
   if (
-    Object.prototype.hasOwnProperty.call(importedSettings, 'phoneVerificationEnabled')
-    || Object.prototype.hasOwnProperty.call(importedSettings, 'plusModeEnabled')
+    Object.prototype.hasOwnProperty.call(importedSettings, 'plusModeEnabled')
     || Object.prototype.hasOwnProperty.call(importedSettings, 'signupMethod')
     || Object.prototype.hasOwnProperty.call(importedSettings, 'targetId')
     || Object.prototype.hasOwnProperty.call(importedSettings, 'activeFlowId')
@@ -9099,7 +9038,7 @@ function isLikelyLoggedInChatgptHomeUrl(rawUrl) {
   return !/^\/(?:auth\/|create-account\/|email-verification|log-in|add-phone)(?:[/?#]|$)/i.test(parsed.pathname || '');
 }
 
-function isStep5CompletionChatgptUrl(rawUrl) {
+function isRegistrationCompletionChatgptUrl(rawUrl) {
   const parsed = parseUrlSafely(rawUrl);
   if (!parsed) return false;
   const protocol = String(parsed.protocol || '').toLowerCase();
@@ -9544,20 +9483,20 @@ function isStopError(error) {
 
 function isRetryableContentScriptTransportError(error) {
   const message = String(typeof error === 'string' ? error : error?.message || '');
-  return /back\/forward cache|message channel is closed|Receiving end does not exist|port closed before a response was received|A listener indicated an asynchronous response|内容脚本\s+\d+(?:\.\d+)?\s*秒内未响应|did not respond in \d+s|failed to fetch|networkerror|network error|fetch failed|load failed/i.test(message);
+  return /back\/forward cache|message channel is closed|Receiving end does not exist|port closed before a response was received|A listener indicated an asynchronous response|内容脚本\s+\d+(?:\.\d+)?\s*秒内未响应|did not respond in \d+s|页面刚完成跳转或刷新，内容脚本还没有重新接回|failed to fetch|networkerror|network error|fetch failed|load failed/i.test(message);
 }
 
-function isStepFetchNetworkRetryableError(error) {
-  const message = String(getErrorMessage(error) || '').toLowerCase();
-  return /failed to fetch|networkerror|network error|fetch failed|load failed|net::err_/i.test(message);
+function isStepTransientTransportRetryableError(error) {
+  const message = String(getErrorMessage(error) || '');
+  return isRetryableContentScriptTransportError(error) || /net::err_/i.test(message);
 }
 
-function getStepFetchNetworkRetryPolicy(step) {
-  if (typeof STEP_FETCH_NETWORK_RETRY_POLICIES === 'undefined' || !(STEP_FETCH_NETWORK_RETRY_POLICIES instanceof Map)) {
+function getStepTransientTransportRetryPolicy(step) {
+  if (typeof STEP_TRANSIENT_TRANSPORT_RETRY_POLICIES === 'undefined' || !(STEP_TRANSIENT_TRANSPORT_RETRY_POLICIES instanceof Map)) {
     return null;
   }
 
-  const policy = STEP_FETCH_NETWORK_RETRY_POLICIES.get(Number(step));
+  const policy = STEP_TRANSIENT_TRANSPORT_RETRY_POLICIES.get(Number(step));
   if (!policy) {
     return null;
   }
@@ -9706,7 +9645,7 @@ function isAddPhoneAuthFailure(error) {
   if (/\u624b\u673a\u53f7\u8f93\u5165\u6a21\u5f0f|phone\s+entry/i.test(message)) {
     return false;
   }
-  return /https:\/\/auth\.openai\.com\/add-phone(?:[/?#]|$)|\badd-phone\b|\u6dfb\u52a0\u624b\u673a\u53f7|\u624b\u673a\u53f7\u7801|\u8fdb\u5165\u624b\u673a\u53f7\u9875\u9762|\u624b\u673a\u53f7\u9875|\u624b\u673a\u53f7\u9875\u9762|phone\s+number|telephone/i.test(message);
+  return /\u6dfb\u52a0\u624b\u673a\u53f7|\u624b\u673a\u53f7\u7801|\u8fdb\u5165\u624b\u673a\u53f7\u9875\u9762|\u624b\u673a\u53f7\u9875|\u624b\u673a\u53f7\u9875\u9762|phone\s+(?:number|verification)\s+(?:page|required|verification)|telephone\s+(?:page|required|verification)/i.test(message);
 }
 
 function getLoginAuthStateLabel(state) {
@@ -9830,8 +9769,13 @@ async function restartSignupPhonePasswordMismatchAttemptFromNode(nodeId, restart
   }
 }
 
-function isEmailSignupPhoneVerificationNode(nodeId = '') {
-  return String(nodeId || '').trim() === 'post-bound-email-phone-verification';
+function isEmailSignupPhoneVerificationNode(nodeId = '', state = {}) {
+  const normalizedNodeId = String(nodeId || '').trim();
+  const resolvedSignupMethod = String(
+    state?.resolvedSignupMethod || state?.signupMethod || ''
+  ).trim().toLowerCase();
+  return normalizedNodeId === 'post-login-phone-verification'
+    && resolvedSignupMethod === 'email';
 }
 
 function isSignupUserAlreadyExistsFailure(error) {
@@ -11529,7 +11473,7 @@ async function completeStep5FromTabUrlAfterTransportError(sourceError = null) {
     initialDelayMs: 300,
   }).catch(() => null);
   const currentUrl = String(tab?.url || '').trim();
-  if (!currentUrl || !isStep5CompletionChatgptUrl(currentUrl)) {
+  if (!currentUrl || !isRegistrationCompletionChatgptUrl(currentUrl)) {
     return null;
   }
 
@@ -11849,7 +11793,9 @@ async function requestStop(options = {}) {
 // Step Execution
 // ============================================================
 
-const STEP_FETCH_NETWORK_RETRY_POLICIES = new Map([
+// These nodes can observe a real page navigation after sending their command.
+// Retry the node's state inspection instead of invalidating earlier registration progress.
+const STEP_TRANSIENT_TRANSPORT_RETRY_POLICIES = new Map([
   [4, { maxAttempts: 3, cooldownMs: 12000 }],
   [8, { maxAttempts: 3, cooldownMs: 12000 }],
   [9, { maxAttempts: 3, cooldownMs: 12000 }],
@@ -11878,12 +11824,12 @@ async function executeNode(nodeId, options = {}) {
     await setNodeStatus(normalizedNodeId, 'running');
     await addLog('开始执行', 'info', { nodeId: normalizedNodeId });
     await humanStepDelay();
-    const fetchRetryPolicy = typeof getStepFetchNetworkRetryPolicy === 'function'
-      ? getStepFetchNetworkRetryPolicy(step)
+    const transientTransportRetryPolicy = typeof getStepTransientTransportRetryPolicy === 'function'
+      ? getStepTransientTransportRetryPolicy(step)
       : null;
-    const isFetchRetryable = (error) => {
-      if (typeof isStepFetchNetworkRetryableError === 'function') {
-        return isStepFetchNetworkRetryableError(error);
+    const isTransientTransportRetryable = (error) => {
+      if (typeof isStepTransientTransportRetryableError === 'function') {
+        return isStepTransientTransportRetryableError(error);
       }
       return isRetryableContentScriptTransportError(error);
     };
@@ -11916,21 +11862,21 @@ async function executeNode(nodeId, options = {}) {
 
         if (attempt > 1) {
           await addLog(
-            `[NETWORK_FETCH_RETRY] 节点 ${normalizedNodeId}：网络请求异常已恢复，当前重试成功（${attempt}/${fetchRetryPolicy?.maxAttempts || attempt}）。`,
+            `[TRANSIENT_TRANSPORT_RETRY] 节点 ${normalizedNodeId}：页面跳转后的通信异常已恢复，当前重试成功（${attempt}/${transientTransportRetryPolicy?.maxAttempts || attempt}）。`,
             'ok'
           );
         }
         break;
       } catch (attemptError) {
-        if (!fetchRetryPolicy || !isFetchRetryable(attemptError) || attempt >= fetchRetryPolicy.maxAttempts) {
+        if (!transientTransportRetryPolicy || !isTransientTransportRetryable(attemptError) || attempt >= transientTransportRetryPolicy.maxAttempts) {
           throw attemptError;
         }
 
         const nextAttempt = attempt + 1;
-        const cooldownMs = fetchRetryPolicy.cooldownMs;
+        const cooldownMs = transientTransportRetryPolicy.cooldownMs;
         const cooldownSeconds = Math.max(1, Math.ceil(cooldownMs / 1000));
         await addLog(
-          `[NETWORK_FETCH_RETRY] 节点 ${normalizedNodeId}：检测到网络请求异常（${getErrorMessage(attemptError)}），${cooldownSeconds} 秒后重试（${nextAttempt}/${fetchRetryPolicy.maxAttempts}）。`,
+          `[TRANSIENT_TRANSPORT_RETRY] 节点 ${normalizedNodeId}：检测到页面跳转后的通信异常（${getErrorMessage(attemptError)}），${cooldownSeconds} 秒后重新确认当前节点（${nextAttempt}/${transientTransportRetryPolicy.maxAttempts}）。`,
           'warn'
         );
         if (cooldownMs > 0) {
@@ -12594,6 +12540,7 @@ const autoRunController = self.MultiPageBackgroundAutoRunController?.createAutoR
   getStopRequested: () => stopRequested,
   hasSavedNodeProgress,
   isAddPhoneAuthFailure,
+  isAddPhoneAuthUrl,
   isPhoneSmsPlatformRateLimitFailure,
   isPlusCheckoutNonFreeTrialFailure,
   isAutoRunTimerParkedError,
@@ -12735,20 +12682,7 @@ async function ensureAutoEmailReady(targetRun, totalRuns, attemptRuns) {
     return currentState.email;
   }
 
-  if (isCustomMailProvider(currentState)) {
-    const poolSize = getCustomMailProviderPool(currentState).length;
-    if (poolSize > 0) {
-      const queuedEmail = getCustomMailProviderPoolEmailForRun(currentState, targetRun);
-      if (!queuedEmail) {
-        throw new Error(`自定义邮箱号池第 ${targetRun} 个邮箱不存在，请检查号池数量是否与自动轮数一致。`);
-      }
-      await setEmailState(queuedEmail);
-      await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：自定义邮箱号池已就绪：${queuedEmail}（第 ${attemptRuns} 次尝试；第 4/8 步仍需手动输入验证码）===`, 'ok');
-      return queuedEmail;
-    }
-  }
-
-  if (isCustomEmailPoolGenerator(currentState)) {
+  if (isCustomMailProvider(currentState) || isCustomEmailPoolGenerator(currentState)) {
     const queuedEmail = getCustomEmailPoolEmailForRun(currentState, targetRun);
     if (!queuedEmail) {
       const poolSize = getCustomEmailPool(currentState).length;
@@ -12893,20 +12827,7 @@ async function ensureAutoEmailReady(targetRun, totalRuns, attemptRuns) {
     return currentState.email;
   }
 
-  if (isCustomMailProvider(currentState)) {
-    const poolSize = getCustomMailProviderPool(currentState).length;
-    if (poolSize > 0) {
-      const queuedEmail = getCustomMailProviderPoolEmailForRun(currentState, targetRun);
-      if (!queuedEmail) {
-        throw new Error(`自定义邮箱号池第 ${targetRun} 个邮箱不存在，请检查号池数量是否与自动轮数一致。`);
-      }
-      await setEmailState(queuedEmail);
-      await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：自定义邮箱号池已就绪：${queuedEmail}（第 ${attemptRuns} 次尝试；第 4/8 步仍需手动输入验证码）===`, 'ok');
-      return queuedEmail;
-    }
-  }
-
-  if (isCustomEmailPoolGenerator(currentState)) {
+  if (isCustomMailProvider(currentState) || isCustomEmailPoolGenerator(currentState)) {
     const queuedEmail = getCustomEmailPoolEmailForRun(currentState, targetRun);
     if (!queuedEmail) {
       const poolSize = getCustomEmailPool(currentState).length;
@@ -13405,7 +13326,7 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
       }
 
       const restartDecision = await getPostStep6AutoRestartDecision(step, err);
-      if (restartDecision.blockedByAddPhone && isEmailSignupPhoneVerificationNode(nodeId)) {
+      if (restartDecision.blockedByAddPhone && isEmailSignupPhoneVerificationNode(nodeId, latestState)) {
         emailSignupPhoneVerificationRestartCount += 1;
         if (emailSignupPhoneVerificationRestartCount > EMAIL_SIGNUP_PHONE_VERIFICATION_RESTART_MAX_ATTEMPTS) {
           await addLog(
@@ -13449,7 +13370,7 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
             ? `当前认证页：${authStateLabel}`
             : '未获取到认证页状态';
         await addLog(
-          `节点 ${getNodeLabel(nodeId, latestState)}：检测到报错且当前未进入 add-phone，正在回到节点 ${restartNodeId} 重新开始授权流程（第 ${postStep7RestartCount} 次重开）。${authStateSuffix}；原因：${restartDecision.errorMessage || '未知错误'}`,
+          `节点 ${getNodeLabel(nodeId, latestState)}：检测到认证链路失败，正在回到节点 ${restartNodeId} 重新开始授权流程（第 ${postStep7RestartCount} 次重开）。${authStateSuffix}；原因：${restartDecision.errorMessage || '未知错误'}`,
           'warn'
         );
         await invalidateDownstreamAfterAutoRunNodeRestart(resetAfterNodeId, {
@@ -13622,10 +13543,6 @@ const signupFlowHelpers = self.MultiPageSignupFlowHelpers?.createSignupFlowHelpe
   isSignupPhoneVerificationPageUrl: (rawUrl) => {
     const parsed = parseUrlSafely(rawUrl);
     return Boolean(parsed && isSignupPageHost(parsed.hostname) && /\/phone-verification(?:[/?#]|$)/i.test(parsed.pathname || ''));
-  },
-  isSignupProfilePageUrl: (rawUrl) => {
-    const parsed = parseUrlSafely(rawUrl);
-    return Boolean(parsed && isSignupPageHost(parsed.hostname) && /\/(?:create-account\/profile|u\/signup\/profile|signup\/profile|about-you)(?:[/?#]|$)/i.test(parsed.pathname || ''));
   },
   isRetryableContentScriptTransportError,
   isHotmailProvider,
@@ -13804,7 +13721,6 @@ const step1Executor = self.MultiPageBackgroundStep1?.createStep1Executor({
   addLog,
   completeNodeFromBackground,
   openSignupEntryTab,
-  sendToContentScriptResilient,
   waitForTabStableComplete,
 });
 const step2Executor = self.MultiPageBackgroundStep2?.createStep2Executor({
@@ -13812,7 +13728,7 @@ const step2Executor = self.MultiPageBackgroundStep2?.createStep2Executor({
   chrome,
   completeNodeFromBackground,
   ensureContentScriptReadyOnTab,
-  ensureSignupEntryPageReady,
+  openSignupEntryTab,
   ensureSignupPostEmailPageReadyInTab,
   ensureSignupPostIdentityPageReadyInTab: signupFlowHelpers.ensureSignupPostIdentityPageReadyInTab,
   getTabId,
@@ -13852,6 +13768,7 @@ const step4Executor = self.MultiPageBackgroundStep4?.createStep4Executor({
   addLog,
   chrome,
   completeNodeFromBackground,
+  confirmStep4PostSubmitState: verificationFlowHelpers.confirmStep4PostSubmitState,
   confirmCustomVerificationStepBypass: verificationFlowHelpers.confirmCustomVerificationStepBypass,
   generateRandomBirthday,
   generateRandomName,
@@ -13936,6 +13853,7 @@ const step8Executor = self.MultiPageBackgroundStep8?.createStep8Executor({
   persistRegistrationEmailState,
   phoneVerificationHelpers,
   getStepIdByKeyForState,
+  setNodeStatus,
   rerunStep7ForStep8Recovery: (...args) => rerunStep7ForStep8Recovery(...args),
   resolveSignupMethod,
   reuseOrCreateTab,
@@ -14630,10 +14548,6 @@ async function openSignupEntryTab(step = 1) {
   return signupFlowHelpers.openSignupEntryTab(step);
 }
 
-async function ensureSignupEntryPageReady(step = 1) {
-  return signupFlowHelpers.ensureSignupEntryPageReady(step);
-}
-
 async function ensureSignupPasswordPageReadyInTab(tabId, step = 2, options = {}) {
   return signupFlowHelpers.ensureSignupPasswordPageReadyInTab(tabId, step, options);
 }
@@ -15074,8 +14988,11 @@ async function getPostStep6AutoRestartDecision(step, error) {
 
   const normalizedStep = Number(step);
   const errorMessage = getErrorMessage(error);
-  const shouldForceRestartFromStep7 = /restart step 7 with a new number/i.test(errorMessage);
+  const shouldForceRestartFromStep7 = /STEP8_RESTART_STEP7::|restart step 7 with a new number/i.test(errorMessage);
   const latestState = await getState();
+  const isPhoneSignupFlow = String(
+    latestState?.resolvedSignupMethod || latestState?.signupMethod || ''
+  ).trim().toLowerCase() === 'phone';
   const explicitAuthChainStartStep = findStepIdByKeyForState('oauth-login', latestState);
   const authChainStartStep = typeof getAuthChainStartStepId === 'function'
     ? getAuthChainStartStepId(latestState)
@@ -15119,7 +15036,7 @@ async function getPostStep6AutoRestartDecision(step, error) {
       : (isBoundEmailReloginTailStep && Number.isFinite(boundEmailReloginStep) && boundEmailReloginStep > 0
       ? boundEmailReloginStep
       : authChainStartStep));
-  if (isPhoneSmsPlatformRateLimitFailure(errorMessage)) {
+  if (isPhoneSmsPlatformRateLimitFailure(errorMessage) && !shouldForceRestartFromStep7) {
     return {
       shouldRestart: false,
       blockedByAddPhone: false,
@@ -15152,7 +15069,7 @@ async function getPostStep6AutoRestartDecision(step, error) {
     };
   }
 
-  if (isPhoneVerificationLocalFailure(errorMessage)) {
+  if (isPhoneVerificationLocalFailure(errorMessage) && !shouldForceRestartFromStep7) {
     return {
       shouldRestart: false,
       blockedByAddPhone: true,
@@ -15174,7 +15091,7 @@ async function getPostStep6AutoRestartDecision(step, error) {
     };
   }
 
-  if (isAddPhoneAuthFailure(error) || isAddPhoneAuthUrl(errorMessage)) {
+  if (isPhoneSignupFlow && (isAddPhoneAuthFailure(error) || isAddPhoneAuthUrl(errorMessage))) {
     return {
       shouldRestart: false,
       blockedByAddPhone: true,
@@ -15199,11 +15116,21 @@ async function getPostStep6AutoRestartDecision(step, error) {
   }
 
   if (isAddPhoneAuthState(authState) && !isPhoneSmsPlatformRateLimitFailure(errorMessage)) {
+    if (isEmailSignupPhoneVerificationNode(currentNodeKey, latestState)) {
+      return {
+        shouldRestart: false,
+        blockedByAddPhone: true,
+        forcedByPhoneVerificationTimeout: false,
+        restartStep: authChainStartStep,
+        errorMessage,
+        authState,
+      };
+    }
     return {
-      shouldRestart: false,
-      blockedByAddPhone: true,
+      shouldRestart: true,
+      blockedByAddPhone: false,
       forcedByPhoneVerificationTimeout: false,
-      restartStep: authChainStartStep,
+      restartStep: restartAnchorStep,
       errorMessage,
       authState,
     };
@@ -15387,7 +15314,7 @@ async function validateStep5PostCompletion(tabId, completionPayload = {}) {
   while (true) {
     const tab = await chrome.tabs.get(tabId).catch(() => null);
     const currentUrl = String(tab?.url || completionPayload?.url || '').trim();
-    if (currentUrl && isStep5CompletionChatgptUrl(currentUrl)) {
+    if (currentUrl && isRegistrationCompletionChatgptUrl(currentUrl)) {
       await debugLog('后台直接通过标签页 URL 确认已进入 chatgpt.com，步骤 5 完成。', {
         completionOutcome: String(completionPayload?.outcome || '').trim(),
         completionUrl: String(completionPayload?.url || '').trim(),
@@ -15453,7 +15380,7 @@ async function validateStep5PostCompletion(tabId, completionPayload = {}) {
       continue;
     }
 
-    if (pageState.successState === 'logged_in_home' && isStep5CompletionChatgptUrl(pageState.url)) {
+    if (pageState.successState === 'logged_in_home' && isRegistrationCompletionChatgptUrl(pageState.url)) {
       await debugLog(`后台复核确认成功状态：${pageState.successState}`, {
         completionOutcome: String(completionPayload?.outcome || '').trim(),
         completionUrl: String(completionPayload?.url || '').trim(),
@@ -15546,6 +15473,7 @@ async function ensureStep8VerificationPageReady(options = {}) {
   if (
     pageState.state === 'verification_page'
     || pageState.state === 'oauth_consent_page'
+    || pageState.state === 'add_phone_page'
     || (options.allowPhoneVerificationPage && pageState.state === 'phone_verification_page')
     || (options.allowAddEmailPage && pageState.state === 'add_email_page')
   ) {
@@ -15625,6 +15553,7 @@ async function ensureStep8VerificationPageReady(options = {}) {
       if (
         pageState.state === 'verification_page'
         || pageState.state === 'oauth_consent_page'
+        || pageState.state === 'add_phone_page'
         || (options.allowPhoneVerificationPage && pageState.state === 'phone_verification_page')
         || (options.allowAddEmailPage && pageState.state === 'add_email_page')
       ) {
@@ -15633,19 +15562,10 @@ async function ensureStep8VerificationPageReady(options = {}) {
       if (pageState.maxCheckAttemptsBlocked) {
         throw new Error(`${CLOUDFLARE_SECURITY_BLOCK_ERROR_PREFIX}${CLOUDFLARE_SECURITY_BLOCK_USER_MESSAGE}`);
       }
-      if (pageState.state === 'add_phone_page' || pageState.state === 'phone_verification_page') {
-        const urlPart = pageState.url ? ` URL: ${pageState.url}` : '';
-        throw new Error(`步骤 ${visibleStep}：当前认证页进入手机号页面，当前流程无法继续自动授权。${urlPart}`.trim());
-      }
     }
 
     const urlPart = pageState.url ? ` URL: ${pageState.url}` : '';
     throw new Error(`STEP8_RESTART_STEP7::步骤 ${visibleStep}：当前认证页进入登录超时报错页，请回到步骤 ${authLoginStep} 重新开始。${urlPart}`.trim());
-  }
-
-  if (pageState.state === 'add_phone_page' || pageState.state === 'phone_verification_page') {
-    const urlPart = pageState.url ? ` URL: ${pageState.url}` : '';
-    throw new Error(`步骤 ${visibleStep}：当前认证页进入手机号页面，当前流程无法继续自动授权。${urlPart}`.trim());
   }
 
   const stateLabel = getLoginAuthStateLabel(pageState.state);
@@ -15897,14 +15817,6 @@ async function waitForStep8Ready(tabId, timeoutMs = STEP8_READY_WAIT_TIMEOUT_MS,
     if (pageState?.maxCheckAttemptsBlocked) {
       throw new Error(`${CLOUDFLARE_SECURITY_BLOCK_ERROR_PREFIX}${CLOUDFLARE_SECURITY_BLOCK_USER_MESSAGE}`);
     }
-    if (pageState?.addPhonePage || pageState?.phoneVerificationPage) {
-      const urlPart = pageState?.url ? ` URL: ${pageState.url}` : '';
-      throw new Error(
-        pageState?.phoneVerificationPage
-          ? `步骤 ${visibleStep}：自动确认 OAuth 只处理 OAuth 授权页，当前仍在手机验证码页。${urlPart}`.trim()
-          : `步骤 ${visibleStep}：自动确认 OAuth 只处理 OAuth 授权页，当前仍在添加手机号页。${urlPart}`.trim()
-      );
-    }
     if (pageState?.retryPage) {
       const retryUrl = String(pageState?.url || '').trim();
       const consentLikeRetry = Boolean(
@@ -16099,9 +16011,6 @@ async function waitForStep8ClickEffect(tabId, baselineUrl, timeoutMs = STEP8_CLI
     const pageState = await getStep8PageState(tabId, 1500, visibleStep);
     if (pageState?.maxCheckAttemptsBlocked) {
       throw new Error(`${CLOUDFLARE_SECURITY_BLOCK_ERROR_PREFIX}${CLOUDFLARE_SECURITY_BLOCK_USER_MESSAGE}`);
-    }
-    if (pageState?.addPhonePage) {
-      throw new Error(`步骤 ${visibleStep}：点击“继续”后页面跳到了手机号页面，当前流程无法继续自动授权。`);
     }
     if (pageState?.retryPage) {
       const retryUrl = String(pageState?.url || baselineUrl || '').trim();

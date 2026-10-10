@@ -7,7 +7,7 @@
       chrome,
       completeNodeFromBackground,
       ensureContentScriptReadyOnTab,
-      ensureSignupEntryPageReady,
+      openSignupEntryTab,
       ensureSignupPostEmailPageReadyInTab,
       ensureSignupPostIdentityPageReadyInTab = ensureSignupPostEmailPageReadyInTab,
       getTabId,
@@ -134,7 +134,7 @@
       let signupTabId = await getTabId('openai-auth');
       if (!signupTabId || !(await isTabAlive('openai-auth'))) {
         await addLog('步骤 2：未发现可用的注册页标签，正在重新打开 ChatGPT 官网...', 'warn');
-        signupTabId = (await ensureSignupEntryPageReady(2)).tabId;
+        signupTabId = await openSignupEntryTab(2);
       } else {
         await chrome.tabs.update(signupTabId, { active: true });
         await keepSignupTabWindowInBackgroundForStep2(signupTabId);
@@ -155,7 +155,7 @@
 
     async function reopenSignupEntryForStep2(logMessage) {
       await addLog(logMessage, 'warn');
-      return (await ensureSignupEntryPageReady(2)).tabId;
+      return openSignupEntryTab(2);
     }
 
     function normalizeSignupPhoneActivationForStep2(activation) {
@@ -270,7 +270,7 @@
         signupPhoneActivation: activation || null,
         nextSignupState: landingResult?.state || step2Result?.state || 'password_page',
         nextSignupUrl: landingResult?.url || step2Result?.url || '',
-        skippedPasswordStep: landingResult?.state === 'phone_verification_page' || landingResult?.state === 'profile_page',
+        skippedPasswordStep: landingResult?.state === 'phone_verification_page',
       });
     }
 

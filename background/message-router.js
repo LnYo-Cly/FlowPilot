@@ -70,7 +70,8 @@
         if (capabilityRegistry?.canUsePhoneSignup) {
           return capabilityRegistry.canUsePhoneSignup(state);
         }
-        return Boolean(state?.phoneVerificationEnabled)
+        return String(state?.activeFlowId || 'openai').trim().toLowerCase() === 'openai'
+          && !['webchat', 'chatgpt2api'].includes(String(state?.targetId || 'cpa').trim().toLowerCase())
           && !Boolean(state?.plusModeEnabled)
           && !Boolean(state?.accountContributionEnabled);
       },
@@ -280,13 +281,12 @@
       const hasActiveFlowId = Object.prototype.hasOwnProperty.call(payload, 'activeFlowId');
       const hasTargetId = Object.prototype.hasOwnProperty.call(payload, 'targetId');
       const hasSignupMethod = Object.prototype.hasOwnProperty.call(payload, 'signupMethod');
-      const hasPhoneVerificationEnabled = Object.prototype.hasOwnProperty.call(payload, 'phoneVerificationEnabled');
       const hasPlusModeEnabled = Object.prototype.hasOwnProperty.call(payload, 'plusModeEnabled');
       const hasAccountDeliveryMode = Object.prototype.hasOwnProperty.call(payload, 'accountDeliveryMode');
       if (hasAccountDeliveryMode) {
         assertExplicitAccountDeliveryTarget(payload);
       }
-      if (!hasActiveFlowId && !hasTargetId && !hasSignupMethod && !hasPhoneVerificationEnabled && !hasPlusModeEnabled && !hasAccountDeliveryMode) {
+      if (!hasActiveFlowId && !hasTargetId && !hasSignupMethod && !hasPlusModeEnabled && !hasAccountDeliveryMode) {
         return {};
       }
       const activeFlowId = normalizeMessageFlowId(payload.activeFlowId, 'openai');
@@ -305,9 +305,6 @@
       if (hasSignupMethod) {
         updates.signupMethod = normalizeSignupMethod(payload.signupMethod);
       }
-      if (hasPhoneVerificationEnabled) {
-        updates.phoneVerificationEnabled = Boolean(payload.phoneVerificationEnabled);
-      }
       if (hasPlusModeEnabled) {
         updates.plusModeEnabled = false;
       }
@@ -317,7 +314,7 @@
           'oauth'
         );
       }
-      if (hasSignupMethod || hasPhoneVerificationEnabled || hasPlusModeEnabled || hasTargetId || hasActiveFlowId || hasAccountDeliveryMode) {
+      if (hasSignupMethod || hasPlusModeEnabled || hasTargetId || hasActiveFlowId || hasAccountDeliveryMode) {
         updates.resolvedSignupMethod = null;
       }
       return updates;
@@ -1062,6 +1059,8 @@
               await setNodeStatusByStep(5, 'skipped', latestState);
               if (payload.skipProfileStepReason === 'combined_verification_profile') {
                 await addLog('步骤 4：当前验证码页已内嵌完成注册资料提交，已自动跳过步骤 5。', 'warn');
+              } else if (payload.skipProfileStepReason === 'registration_success_page') {
+                await addLog('步骤 4：检测到页面已进入注册成功等待页，已自动跳过步骤 5。', 'warn');
               } else {
                 await addLog('步骤 4：检测到账号已直接进入已登录态，已自动跳过步骤 5。', 'warn');
               }
@@ -1533,8 +1532,7 @@
             resolvedSignupMethod: null,
           };
           if (
-            Object.prototype.hasOwnProperty.call(updates, 'phoneVerificationEnabled')
-            || Object.prototype.hasOwnProperty.call(updates, 'plusModeEnabled')
+            Object.prototype.hasOwnProperty.call(updates, 'plusModeEnabled')
             || Object.prototype.hasOwnProperty.call(updates, 'signupMethod')
             || Object.prototype.hasOwnProperty.call(updates, 'targetId')
             || Object.prototype.hasOwnProperty.call(updates, 'activeFlowId')

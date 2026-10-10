@@ -135,6 +135,8 @@ test('auto-run controller skips add-phone failures to the next round instead of 
     autoRunSkipFailures: true,
     autoRunFallbackThreadIntervalMinutes: 0,
     autoStepDelaySeconds: null,
+    signupMethod: 'phone',
+    resolvedSignupMethod: 'phone',
     mailProvider: '163',
     emailGenerator: 'duck',
     gmailBaseEmail: '',
@@ -923,7 +925,7 @@ test('auto-run controller skips step 4 repeated 405 recovery failures to the nex
   assert.equal(runtime.state.autoRunSessionId, 0);
 });
 
-test('auto-run controller keeps retrying the same custom mail provider pool email until success', async () => {
+test('auto-run controller keeps retrying the same custom email pool entry until success', async () => {
   const events = {
     logs: [],
     broadcasts: [],
@@ -940,7 +942,9 @@ test('auto-run controller keeps retrying the same custom mail provider pool emai
     autoRunFallbackThreadIntervalMinutes: 0,
     autoStepDelaySeconds: null,
     mailProvider: 'custom',
-    customMailProviderPool: ['first@example.com'],
+    customEmailPoolEntries: [
+      { id: '1', email: 'first@example.com', enabled: true, used: false }
+    ],
     emailGenerator: 'duck',
     gmailBaseEmail: '',
     mail2925BaseEmail: '',
@@ -1020,7 +1024,7 @@ test('auto-run controller keeps retrying the same custom mail provider pool emai
       stepStatuses: { ...(currentState.stepStatuses || {}) },
       tabRegistry: { ...(currentState.tabRegistry || {}) },
       sourceLastUrls: { ...(currentState.sourceLastUrls || {}) },
-      customMailProviderPool: [...(currentState.customMailProviderPool || [])],
+      customEmailPoolEntries: [...(currentState.customEmailPoolEntries || [])],
     }),
     getStopRequested: () => false,
     hasSavedProgress: () => false,
@@ -1076,7 +1080,7 @@ test('auto-run controller keeps retrying the same custom mail provider pool emai
     mode: 'restart',
   });
 
-  assert.equal(events.runCalls, 3, 'custom mail provider pool should keep retrying the same round until success');
+  assert.equal(events.runCalls, 3, 'custom email pool should keep retrying the same round until success');
   assert.equal(events.broadcasts.filter(({ phase }) => phase === 'retrying').length, 2);
   assert.ok(events.broadcasts.filter(({ phase }) => phase === 'retrying').every(({ currentRun }) => currentRun === 1));
   assert.ok(events.logs.some(({ message }) => /继续使用当前邮箱/.test(message)));

@@ -25,6 +25,7 @@
       getState,
       hasSavedNodeProgress,
       isAddPhoneAuthFailure,
+      isAddPhoneAuthUrl = () => false,
       isDuckDdgDailyLimitFailure,
       isKiroProxyFailure,
       isAutoRunTimerParkedError,
@@ -248,7 +249,6 @@
         customPassword: state.customPassword,
         plusModeEnabled: state.plusModeEnabled,
         plusPaymentMethod: state.plusPaymentMethod,
-        phoneVerificationEnabled: state.phoneVerificationEnabled,
         phoneSignupReloginAfterBindEmailEnabled: state.phoneSignupReloginAfterBindEmailEnabled,
         paypalEmail: state.paypalEmail,
         paypalPassword: state.paypalPassword,
@@ -434,10 +434,10 @@
       return true;
     }
 
-    function shouldKeepCustomMailProviderPoolEmail(state = {}) {
-      return String(state?.mailProvider || '').trim().toLowerCase() === 'custom'
-        && Array.isArray(state?.customMailProviderPool)
-        && state.customMailProviderPool.length > 0;
+    function shouldKeepCustomEmailPoolEmail(state = {}) {
+      const isCustomProvider = String(state?.mailProvider || '').trim().toLowerCase() === 'custom';
+      const hasEmailPoolEntries = Array.isArray(state?.customEmailPoolEntries) && state.customEmailPoolEntries.length > 0;
+      return isCustomProvider && hasEmailPoolEntries;
     }
 
     function isPhoneNumberSupplyExhaustedFailure(error) {
@@ -685,7 +685,7 @@
         let attemptRun = resumingCurrentRound ? resumeAttemptRun : 1;
         let reuseExistingProgress = resumingCurrentRound;
         const currentRoundState = await getState();
-        const keepSameEmailUntilAddPhone = autoRunSkipFailures && shouldKeepCustomMailProviderPoolEmail(currentRoundState);
+        const keepSameEmailUntilAddPhone = autoRunSkipFailures && shouldKeepCustomEmailPoolEmail(currentRoundState);
         const maxAttemptsForRound = autoRunSkipFailures
           ? (keepSameEmailUntilAddPhone ? Number.MAX_SAFE_INTEGER : AUTO_RUN_MAX_RETRIES_PER_ROUND + 1)
           : Math.max(1, attemptRun);
@@ -822,6 +822,7 @@
             }
 
             const reason = getErrorMessage(err);
+            const errorState = await getState();
             roundSummary.failureReasons.push(reason);
             const blockedByPhoneSmsRateLimit = typeof isPhoneSmsPlatformRateLimitFailure === 'function'
               && isPhoneSmsPlatformRateLimitFailure(err);
@@ -829,8 +830,9 @@
               && isPhoneNumberSupplyExhaustedFailure(err);
             const blockedByAddPhone = !blockedByPhoneSmsRateLimit
               && !blockedByPhoneNoSupply
+              && isPhoneSignupFlow(errorState)
               && typeof isAddPhoneAuthFailure === 'function'
-              && isAddPhoneAuthFailure(err);
+              && (isAddPhoneAuthFailure(err) || isAddPhoneAuthUrl(reason));
             const blockedByPlusNonFreeTrial = typeof isPlusCheckoutNonFreeTrialFailure === 'function'
               && isPlusCheckoutNonFreeTrialFailure(err);
             const blockedBySignupUserAlreadyExists = typeof isSignupUserAlreadyExistsFailure === 'function'
