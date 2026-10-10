@@ -268,6 +268,16 @@
     return Boolean(options?.plusModeEnabled || options?.plusMode);
   }
 
+  // 强制密码注册：开启后验证码直达页会点「使用密码继续」扭回密码页；
+  // 关闭则验证码直达即跳过密码填写。默认开启。
+  function isForcePasswordSignupEnabled(options = {}) {
+    const flat = options?.forcePasswordSignup;
+    if (typeof flat === 'boolean') return flat;
+    const nested = options?.settingsState?.flows?.openai?.signup?.forcePasswordSignup;
+    if (typeof nested === 'boolean') return nested;
+    return true;
+  }
+
   function normalizeTargetId(value = '') {
     const normalized = String(value || '').trim().toLowerCase();
     return TARGET_DELIVERY_ROUTES[normalized] ? normalized : OPENAI_TARGET_CPA;
@@ -294,9 +304,20 @@
 
   function buildRegistrationStage(options = {}) {
     const signupMethod = normalizeSignupMethod(options?.resolvedSignupMethod || options?.signupMethod);
-    return signupMethod === SIGNUP_METHOD_PHONE
+    const forcePasswordSignup = isForcePasswordSignupEnabled(options);
+    const steps = signupMethod === SIGNUP_METHOD_PHONE
       ? cloneSteps(REGISTRATION_STAGE_PHONE)
       : cloneSteps(REGISTRATION_STAGE_EMAIL);
+    return steps.map((step) => (
+      step.key === 'fill-password'
+        ? {
+            ...step,
+            title: forcePasswordSignup
+              ? '填写密码并继续（强制密码）'
+              : '填写密码（验证码直达可跳过）',
+          }
+        : step
+    ));
   }
 
   function buildPaymentStage(options = {}) {
@@ -401,6 +422,7 @@
     getAllSteps,
     getModeStepDefinitions: buildModeStepDefinitions,
     getPlusPaymentStepTitle,
+    isForcePasswordSignupEnabled,
     isPlusModeEnabled,
     normalizePlusPaymentMethod,
     normalizeSignupMethod,

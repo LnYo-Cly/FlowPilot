@@ -207,6 +207,8 @@ const rowGrokWebchat2ApiKey = document.getElementById('row-grok-webchat2api-key'
 const inputGrokWebchat2ApiKey = document.getElementById('input-grok-webchat2api-key');
 const rowGrok2ApiUrl = document.getElementById('row-grok2api-url');
 const inputGrok2ApiUrl = document.getElementById('input-grok2api-url');
+const rowGrok2ApiUser = document.getElementById('row-grok2api-user');
+const inputGrok2ApiUser = document.getElementById('input-grok2api-user');
 const rowGrok2ApiKey = document.getElementById('row-grok2api-key');
 const inputGrok2ApiKey = document.getElementById('input-grok2api-key');
 const rowOpenAiWebchatUrl = document.getElementById('row-openai-webchat-url');
@@ -230,6 +232,11 @@ const rowKiroLoginUrl = document.getElementById('row-kiro-login-url');
 const displayKiroLoginUrl = document.getElementById('display-kiro-login-url');
 const rowKiroUploadStatus = document.getElementById('row-kiro-upload-status');
 const displayKiroUploadStatus = document.getElementById('display-kiro-upload-status');
+const selectKiroAuthMethod = document.getElementById('select-kiro-auth-method');
+const rowKiroGithubAccount = document.getElementById('row-kiro-github-account');
+const displayKiroGithubAccount = document.getElementById('display-kiro-github-account');
+const rowKiroGithubAuthStatus = document.getElementById('row-kiro-github-auth-status');
+const displayKiroGithubAuthStatus = document.getElementById('display-kiro-github-auth-status');
 const inputCline2ApiUrl = document.getElementById('input-cline2api-url');
 const inputCline2ApiToken = document.getElementById('input-cline2api-token');
 const btnTestCline2Api = document.getElementById('btn-test-cline2api');
@@ -480,6 +487,8 @@ const rowPhoneVerificationFold = document.getElementById('row-phone-verification
 const rowSignupMethod = document.getElementById('row-signup-method');
 const rowPhoneSignupReloginAfterBindEmail = document.getElementById('row-phone-signup-relogin-after-bind-email');
 const inputPhoneSignupReloginAfterBindEmail = document.getElementById('input-phone-signup-relogin-after-bind-email');
+const rowForcePasswordSignup = document.getElementById('row-force-password-signup');
+const inputForcePasswordSignup = document.getElementById('input-force-password-signup');
 const rowSignupPhone = document.getElementById('row-signup-phone');
 const signupMethodButtons = Array.from(document.querySelectorAll('[data-signup-method]'));
 const selectPhoneSmsProvider = document.getElementById('select-phone-sms-provider');
@@ -659,6 +668,8 @@ let currentStepDefinitionFlowId = DEFAULT_ACTIVE_FLOW_ID;
 let currentStepDefinitionTargetId = '';
 let currentStepDefinitionOpenAiWebchatUploadEnabled = false;
 let currentStepDefinitionGrokSub2apiGrok2ApiUploadEnabled = false;
+let currentStepDefinitionKiroAuthMethod = '';
+let currentStepDefinitionForcePasswordSignup = true;
 let phoneSignupReuseUiWasLocked = false;
 let kiroRsConnectionTestStatusText = '未测试';
 let sub2ApiConnectionTestStatusText = '未测试';
@@ -1198,6 +1209,13 @@ function getStepDefinitionsForMode(plusModeEnabled = false, options = {}) {
   const settingsState = typeof options === 'string'
     ? (typeof latestState !== 'undefined' ? latestState?.settingsState : undefined)
     : (options.settingsState || (typeof latestState !== 'undefined' ? latestState?.settingsState : undefined));
+  const forcePasswordSignup = typeof options === 'string'
+    ? Boolean(typeof inputForcePasswordSignup !== 'undefined' && inputForcePasswordSignup
+      ? inputForcePasswordSignup.checked
+      : (typeof latestState !== 'undefined' ? latestState?.forcePasswordSignup !== false : true))
+    : Boolean(options.forcePasswordSignup ?? (typeof inputForcePasswordSignup !== 'undefined' && inputForcePasswordSignup
+      ? inputForcePasswordSignup.checked
+      : (typeof latestState !== 'undefined' ? latestState?.forcePasswordSignup !== false : true)));
   return (window.MultiPageStepDefinitions?.getSteps?.({
     activeFlowId: String(activeFlowId || '').trim().toLowerCase() || defaultFlowId,
     targetId,
@@ -1208,6 +1226,7 @@ function getStepDefinitionsForMode(plusModeEnabled = false, options = {}) {
     openaiWebchatUploadEnabled,
     grokSub2apiGrok2ApiUploadEnabled,
     settingsState,
+    forcePasswordSignup,
     signupMethod: normalizeSignupMethod(rawSignupMethod),
     phoneSignupReloginAfterBindEmailEnabled,
     accountContributionEnabled,
@@ -1264,6 +1283,13 @@ function getWorkflowNodesForMode(plusModeEnabled = false, options = {}) {
   const settingsState = typeof options === 'string'
     ? (typeof latestState !== 'undefined' ? latestState?.settingsState : undefined)
     : (options.settingsState || (typeof latestState !== 'undefined' ? latestState?.settingsState : undefined));
+  const forcePasswordSignup = typeof options === 'string'
+    ? Boolean(typeof inputForcePasswordSignup !== 'undefined' && inputForcePasswordSignup
+      ? inputForcePasswordSignup.checked
+      : (typeof latestState !== 'undefined' ? latestState?.forcePasswordSignup !== false : true))
+    : Boolean(options.forcePasswordSignup ?? (typeof inputForcePasswordSignup !== 'undefined' && inputForcePasswordSignup
+      ? inputForcePasswordSignup.checked
+      : (typeof latestState !== 'undefined' ? latestState?.forcePasswordSignup !== false : true)));
   const nodes = window.MultiPageStepDefinitions?.getNodes?.({
     activeFlowId: String(activeFlowId || '').trim().toLowerCase() || defaultFlowId,
     targetId,
@@ -1274,6 +1300,7 @@ function getWorkflowNodesForMode(plusModeEnabled = false, options = {}) {
     openaiWebchatUploadEnabled,
     grokSub2apiGrok2ApiUploadEnabled,
     settingsState,
+    forcePasswordSignup,
     signupMethod: normalizeSignupMethod(rawSignupMethod),
     phoneSignupReloginAfterBindEmailEnabled,
     accountContributionEnabled,
@@ -1365,6 +1392,14 @@ function rebuildStepDefinitionState(plusModeEnabled = false, options = {}) {
     ) : false)
   );
   const settingsState = options.settingsState || (typeof latestState !== 'undefined' ? latestState?.settingsState : undefined);
+  const forcePasswordSignup = Boolean(
+    options.forcePasswordSignup
+    ?? (typeof inputForcePasswordSignup !== 'undefined' && inputForcePasswordSignup
+      ? inputForcePasswordSignup.checked
+      : (settingsState?.flows?.openai?.signup?.forcePasswordSignup
+        ?? (typeof latestState !== 'undefined' ? latestState?.forcePasswordSignup : undefined)
+        ?? true))
+  );
   currentPlusPaymentMethod = normalizePlusPaymentMethod(rawPaymentMethod);
   currentAccountDeliveryMode = normalizeAccountDeliveryMode(rawAccountDeliveryMode, 'oauth');
   currentAccountDeliveryRouteId = String(rawAccountDeliveryRouteId || '').trim();
@@ -1387,6 +1422,14 @@ function rebuildStepDefinitionState(plusModeEnabled = false, options = {}) {
   if (typeof currentStepDefinitionGrokSub2apiGrok2ApiUploadEnabled !== 'undefined') {
     currentStepDefinitionGrokSub2apiGrok2ApiUploadEnabled = Boolean(grokSub2apiGrok2ApiUploadEnabled);
   }
+  if (typeof currentStepDefinitionKiroAuthMethod !== 'undefined') {
+    currentStepDefinitionKiroAuthMethod = String(
+      settingsState?.flows?.kiro?.authMethod || 'builder-id'
+    ).trim().toLowerCase() === 'github' ? 'github' : 'builder-id';
+  }
+  if (typeof currentStepDefinitionForcePasswordSignup !== 'undefined') {
+    currentStepDefinitionForcePasswordSignup = forcePasswordSignup;
+  }
   stepDefinitions = getStepDefinitionsForMode(currentPlusModeEnabled, {
     activeFlowId: nextActiveFlowId,
     targetId,
@@ -1396,6 +1439,7 @@ function rebuildStepDefinitionState(plusModeEnabled = false, options = {}) {
     openaiWebchatUploadEnabled,
     grokSub2apiGrok2ApiUploadEnabled,
     settingsState,
+    forcePasswordSignup,
     signupMethod: currentSignupMethod,
     phoneSignupReloginAfterBindEmailEnabled: currentPhoneSignupReloginAfterBindEmailEnabled,
     accountContributionEnabled,
@@ -1410,6 +1454,7 @@ function rebuildStepDefinitionState(plusModeEnabled = false, options = {}) {
       openaiWebchatUploadEnabled,
       grokSub2apiGrok2ApiUploadEnabled,
       settingsState,
+      forcePasswordSignup,
       signupMethod: currentSignupMethod,
       phoneSignupReloginAfterBindEmailEnabled: currentPhoneSignupReloginAfterBindEmailEnabled,
       accountContributionEnabled,
@@ -2935,6 +2980,29 @@ function getKiroRuntimeState(state = {}) {
     return flowState;
   }
   return {};
+}
+
+function getKiroAuthMethod(state = latestState) {
+  const raw = String(
+    state?.settingsState?.flows?.kiro?.authMethod
+    || state?.kiroAuthMethod
+    || 'builder-id'
+  ).trim().toLowerCase();
+  return raw === 'github' ? 'github' : 'builder-id';
+}
+
+function updateKiroAuthMethodUI(state = latestState) {
+  const authMethod = getKiroAuthMethod(state);
+  if (selectKiroAuthMethod) {
+    selectKiroAuthMethod.value = authMethod;
+  }
+  const githubRowDisplay = authMethod === 'github' ? '' : 'none';
+  if (rowKiroGithubAccount) {
+    rowKiroGithubAccount.style.display = githubRowDisplay;
+  }
+  if (rowKiroGithubAuthStatus) {
+    rowKiroGithubAuthStatus.style.display = githubRowDisplay;
+  }
 }
 
 function getGrokRuntimeState(state = {}) {
@@ -5692,10 +5760,19 @@ function collectSettingsPayload() {
       || latestState?.settingsState?.flows?.grok?.targets?.grok2api?.baseUrl
       || ''
     ).trim();
+  const currentGrok2ApiUserValue = typeof inputGrok2ApiUser !== 'undefined' && inputGrok2ApiUser
+    ? String(inputGrok2ApiUser.value ?? '').trim() || 'admin'
+    : String(
+      latestState?.grok2ApiUsername
+      || latestState?.settingsState?.flows?.grok?.targets?.grok2api?.username
+      || 'admin'
+    ).trim() || 'admin';
   const currentGrok2ApiKeyValue = typeof inputGrok2ApiKey !== 'undefined' && inputGrok2ApiKey
     ? String(inputGrok2ApiKey.value ?? '').trim()
     : String(
-      latestState?.grok2ApiAdminKey
+      latestState?.grok2ApiPassword
+      || latestState?.grok2ApiAdminKey
+      || latestState?.settingsState?.flows?.grok?.targets?.grok2api?.password
       || latestState?.settingsState?.flows?.grok?.targets?.grok2api?.apiKey
       || ''
     ).trim();
@@ -5760,6 +5837,9 @@ function collectSettingsPayload() {
     kiroRsKey: currentKiroRsKeyValue !== null
       ? currentKiroRsKeyValue
       : String(latestState?.kiroRsKey || '').trim(),
+    kiroAuthMethod: (typeof selectKiroAuthMethod !== 'undefined' && selectKiroAuthMethod)
+      ? String(selectKiroAuthMethod.value || 'builder-id')
+      : String(latestState?.settingsState?.flows?.kiro?.authMethod || 'builder-id'),
     cline2apiBaseUrl: (typeof inputCline2ApiUrl !== 'undefined' && inputCline2ApiUrl)
       ? String(inputCline2ApiUrl.value ?? '').trim()
       : String(
@@ -5776,6 +5856,8 @@ function collectSettingsPayload() {
       ),
     ...createSharedWebchatConfigPatch(sharedWebchatUrl, sharedWebchatAdminKey),
     grok2ApiUrl: currentGrok2ApiUrlValue,
+    grok2ApiUsername: currentGrok2ApiUserValue,
+    grok2ApiPassword: currentGrok2ApiKeyValue,
     grok2ApiAdminKey: currentGrok2ApiKeyValue,
     openaiWebchatUploadEnabled: openAiWebchatUploadEnabled,
     ...createOpenAiChatgpt2ApiConfigPatch(currentOpenAiChatgpt2ApiUrlValue, currentOpenAiChatgpt2ApiKeyValue),
@@ -5959,6 +6041,9 @@ function collectSettingsPayload() {
     phoneSignupReloginAfterBindEmailEnabled: typeof inputPhoneSignupReloginAfterBindEmail !== 'undefined' && inputPhoneSignupReloginAfterBindEmail
       ? Boolean(inputPhoneSignupReloginAfterBindEmail.checked)
       : false,
+    forcePasswordSignup: typeof inputForcePasswordSignup !== 'undefined' && inputForcePasswordSignup
+      ? Boolean(inputForcePasswordSignup.checked)
+      : true,
     phoneSmsProvider: phoneSmsProviderValue,
     phoneSmsProviderOrder: phoneSmsProviderOrderValue,
     verificationResendCount: normalizeVerificationResendCount(
@@ -12062,6 +12147,17 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, plusPaymentMethodOr
       ) : false)
   );
   const nextSettingsState = options.settingsState || (typeof latestState !== 'undefined' ? latestState?.settingsState : null);
+  const nextKiroAuthMethod = String(
+    nextSettingsState?.flows?.kiro?.authMethod || 'builder-id'
+  ).trim().toLowerCase() === 'github' ? 'github' : 'builder-id';
+  const nextForcePasswordSignup = Boolean(
+    options.forcePasswordSignup
+    ?? (typeof inputForcePasswordSignup !== 'undefined' && inputForcePasswordSignup
+      ? inputForcePasswordSignup.checked
+      : (nextSettingsState?.flows?.openai?.signup?.forcePasswordSignup
+        ?? (typeof latestState !== 'undefined' ? latestState?.forcePasswordSignup : undefined)
+        ?? true))
+  );
   const nextPaymentMethod = normalizePlusPaymentMethod(rawPaymentMethod);
   const nextActiveFlowId = String(
     options.activeFlowId
@@ -12081,6 +12177,12 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, plusPaymentMethodOr
   const currentGrokSub2apiGrok2ApiUploadEnabled = typeof currentStepDefinitionGrokSub2apiGrok2ApiUploadEnabled !== 'undefined'
     ? Boolean(currentStepDefinitionGrokSub2apiGrok2ApiUploadEnabled)
     : Boolean(typeof latestState !== 'undefined' ? latestState?.grokSub2apiGrok2ApiUploadEnabled : false);
+  const currentKiroAuthMethod = typeof currentStepDefinitionKiroAuthMethod !== 'undefined'
+    ? String(currentStepDefinitionKiroAuthMethod || 'builder-id')
+    : 'builder-id';
+  const currentForcePasswordSignup = typeof currentStepDefinitionForcePasswordSignup !== 'undefined'
+    ? Boolean(currentStepDefinitionForcePasswordSignup)
+    : true;
   const rootScope = typeof window !== 'undefined' ? window : globalThis;
   const currentPaymentStep = stepDefinitions.find((step) => step.key === 'paypal-approve');
   const nextPaymentTitle = rootScope.MultiPageStepDefinitions?.getPlusPaymentStepTitle?.({
@@ -12109,6 +12211,8 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, plusPaymentMethodOr
     || nextGrokSub2apiGrok2ApiUploadEnabled !== currentGrokSub2apiGrok2ApiUploadEnabled
     || nextActiveFlowId !== currentFlowId
     || normalizedNextTargetId !== currentTargetId
+    || nextKiroAuthMethod !== currentKiroAuthMethod
+    || nextForcePasswordSignup !== currentForcePasswordSignup
     || paymentTitleChanged;
   if (!shouldRender) {
     return;
@@ -12123,6 +12227,7 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, plusPaymentMethodOr
     openaiWebchatUploadEnabled: nextOpenaiWebchatUploadEnabled,
     grokSub2apiGrok2ApiUploadEnabled: nextGrokSub2apiGrok2ApiUploadEnabled,
     settingsState: nextSettingsState,
+    forcePasswordSignup: nextForcePasswordSignup,
     signupMethod: nextSignupMethod,
     phoneSignupReloginAfterBindEmailEnabled: nextPhoneSignupReloginAfterBindEmailEnabled,
     accountContributionEnabled: nextAccountContributionEnabled,
@@ -12155,6 +12260,7 @@ function syncStepDefinitionsFromUiState(stateOverrides = {}) {
     openaiWebchatUploadEnabled: stepDefinitionState.openaiWebchatUploadEnabled,
     grokSub2apiGrok2ApiUploadEnabled: stepDefinitionState.grokSub2apiGrok2ApiUploadEnabled,
     settingsState: nextState?.settingsState,
+    forcePasswordSignup: nextState?.forcePasswordSignup !== false,
     signupMethod: stepDefinitionState.signupMethod,
     phoneSignupReloginAfterBindEmailEnabled: Boolean(nextState?.phoneSignupReloginAfterBindEmailEnabled),
     accountContributionEnabled: Boolean(nextState?.accountContributionEnabled),
@@ -12186,6 +12292,7 @@ function applySettingsState(state) {
       openaiWebchatUploadEnabled: stepDefinitionState.openaiWebchatUploadEnabled,
       grokSub2apiGrok2ApiUploadEnabled: stepDefinitionState.grokSub2apiGrok2ApiUploadEnabled,
       settingsState: state?.settingsState,
+      forcePasswordSignup: state?.forcePasswordSignup !== false,
       phoneSignupReloginAfterBindEmailEnabled: Boolean(state?.phoneSignupReloginAfterBindEmailEnabled),
       accountContributionEnabled: Boolean(state?.accountContributionEnabled),
     });
@@ -12332,9 +12439,18 @@ function applySettingsState(state) {
       || ''
     ).trim();
   }
+  if (typeof inputGrok2ApiUser !== 'undefined' && inputGrok2ApiUser) {
+    inputGrok2ApiUser.value = String(
+      state?.grok2ApiUsername
+      || state?.settingsState?.flows?.grok?.targets?.grok2api?.username
+      || 'admin'
+    );
+  }
   if (typeof inputGrok2ApiKey !== 'undefined' && inputGrok2ApiKey) {
     inputGrok2ApiKey.value = String(
-      state?.grok2ApiAdminKey
+      state?.grok2ApiPassword
+      || state?.grok2ApiAdminKey
+      || state?.settingsState?.flows?.grok?.targets?.grok2api?.password
       || state?.settingsState?.flows?.grok?.targets?.grok2api?.apiKey
       || ''
     );
@@ -12391,6 +12507,27 @@ function applySettingsState(state) {
       || ''
     ).trim();
     displayKiroLoginUrl.textContent = kiroLoginUrl || '未打开';
+  }
+  if (typeof displayKiroGithubAccount !== 'undefined' && displayKiroGithubAccount) {
+    const githubAccountText = String(
+      kiroRuntimeState?.github?.username
+      || kiroRuntimeState?.github?.email
+      || ''
+    ).trim();
+    const githubStatus = String(kiroRuntimeState?.github?.status || '').trim();
+    displayKiroGithubAccount.textContent = githubAccountText
+      ? `${githubAccountText}${githubStatus && githubStatus !== 'completed' ? `（${githubStatus}）` : ''}`
+      : '未注册';
+  }
+  if (typeof displayKiroGithubAuthStatus !== 'undefined' && displayKiroGithubAuthStatus) {
+    const githubAuthStatus = String(
+      kiroRuntimeState?.githubAuth?.status
+      || ''
+    ).trim();
+    displayKiroGithubAuthStatus.textContent = getKiroUploadStatusLabel(githubAuthStatus || '未开始');
+  }
+  if (typeof selectKiroAuthMethod !== 'undefined' && selectKiroAuthMethod) {
+    selectKiroAuthMethod.value = getKiroAuthMethod(state);
   }
   if (typeof displayKiroUploadStatus !== 'undefined' && displayKiroUploadStatus) {
     const kiroUploadStatus = String(
@@ -12625,6 +12762,11 @@ function applySettingsState(state) {
     inputPhoneSignupReloginAfterBindEmail.checked = state?.phoneSignupReloginAfterBindEmailEnabled !== undefined
       ? Boolean(state.phoneSignupReloginAfterBindEmailEnabled)
       : DEFAULT_PHONE_SIGNUP_RELOGIN_AFTER_BIND_EMAIL_ENABLED;
+  }
+  if (typeof inputForcePasswordSignup !== 'undefined' && inputForcePasswordSignup) {
+    inputForcePasswordSignup.checked = state?.forcePasswordSignup !== undefined
+      ? Boolean(state.forcePasswordSignup)
+      : true;
   }
   const restoredPhoneSmsProvider = normalizePhoneSmsProvider(state?.phoneSmsProvider);
   const previousPhoneSmsProvider = selectPhoneSmsProvider ? normalizePhoneSmsProvider(selectPhoneSmsProvider.value) : restoredPhoneSmsProvider;
@@ -14925,6 +15067,9 @@ function updatePanelModeUI() {
   if (typeof applyFlowSettingsGroupVisibility === 'function') {
     applyFlowSettingsGroupVisibility(visibleGroupIds);
   }
+  if (typeof updateKiroAuthMethodUI === 'function') {
+    updateKiroAuthMethodUI(latestState);
+  }
   if (typeof renderAccountDeliveryControl === 'function') {
     renderAccountDeliveryControl(capabilityState);
   }
@@ -14977,7 +15122,7 @@ function updateGrokSub2ApiGrok2ApiUploadUi(activeFlowId = '', targetId = '') {
   if (rowGrokSub2ApiGrok2ApiUpload) {
     rowGrokSub2ApiGrok2ApiUpload.style.display = isSub2Api ? '' : 'none';
   }
-  [rowGrok2ApiUrl, rowGrok2ApiKey].forEach((row) => {
+  [rowGrok2ApiUrl, rowGrok2ApiUser, rowGrok2ApiKey].forEach((row) => {
     if (row) {
       row.style.display = showGrok2ApiControls ? '' : 'none';
     }
@@ -17353,6 +17498,29 @@ selectPanelMode.addEventListener('change', async () => {
   });
 });
 
+selectKiroAuthMethod?.addEventListener('change', () => {
+  const nextMethod = getKiroAuthMethod({ kiroAuthMethod: selectKiroAuthMethod.value });
+  const nextSettingsState = {
+    ...(latestState?.settingsState || {}),
+    flows: {
+      ...(latestState?.settingsState?.flows || {}),
+      kiro: {
+        ...(latestState?.settingsState?.flows?.kiro || {}),
+        authMethod: nextMethod,
+      },
+    },
+  };
+  syncLatestState({ settingsState: nextSettingsState });
+  updateKiroAuthMethodUI(latestState);
+  if (typeof syncStepDefinitionsFromUiState === 'function') {
+    syncStepDefinitionsFromUiState(latestState);
+  }
+  renderStepStatuses(latestState);
+  updateButtonStates();
+  markSettingsDirty(true);
+  saveSettings({ silent: true }).catch(() => { });
+});
+
 [inputCline2ApiUrl, inputCline2ApiToken].forEach((input) => {
   input?.addEventListener('input', () => {
     markSettingsDirty(true);
@@ -17381,10 +17549,12 @@ selectPanelMode.addEventListener('change', async () => {
   });
 });
 
-[inputGrok2ApiUrl, inputGrok2ApiKey].forEach((input) => {
+[inputGrok2ApiUrl, inputGrok2ApiUser, inputGrok2ApiKey].forEach((input) => {
   input?.addEventListener('input', () => {
     syncLatestState({
       grok2ApiUrl: String(inputGrok2ApiUrl?.value || '').trim(),
+      grok2ApiUsername: String(inputGrok2ApiUser?.value || '').trim() || 'admin',
+      grok2ApiPassword: String(inputGrok2ApiKey?.value || '').trim(),
       grok2ApiAdminKey: String(inputGrok2ApiKey?.value || '').trim(),
     });
     markSettingsDirty(true);
@@ -18676,6 +18846,14 @@ inputPhoneSignupReloginAfterBindEmail?.addEventListener('change', () => {
     phoneSignupReloginAfterBindEmailEnabled: Boolean(inputPhoneSignupReloginAfterBindEmail.checked),
   });
   updatePhoneVerificationSettingsUI();
+  markSettingsDirty(true);
+  saveSettings({ silent: true }).catch(() => { });
+});
+
+inputForcePasswordSignup?.addEventListener('change', () => {
+  syncStepDefinitionsFromUiState({
+    forcePasswordSignup: Boolean(inputForcePasswordSignup.checked),
+  });
   markSettingsDirty(true);
   saveSettings({ silent: true }).catch(() => { });
 });

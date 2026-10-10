@@ -487,11 +487,22 @@
           apiKey: String(targetState.apiKey ?? ''),
         };
       }
-      if (flowId === 'grok' && (targetId === 'webchat2api' || targetId === 'grok2api')) {
+      if (flowId === 'grok' && targetId === 'webchat2api') {
         return {
           ...targetState,
           baseUrl: String(targetState.baseUrl ?? '').trim(),
           apiKey: String(targetState.apiKey ?? '').trim(),
+        };
+      }
+      if (flowId === 'grok' && targetId === 'grok2api') {
+        const resolvedPassword = String(targetState.password ?? targetState.apiKey ?? '');
+        return {
+          ...targetState,
+          baseUrl: String(targetState.baseUrl ?? '').trim(),
+          username: String(targetState.username ?? '').trim() || 'admin',
+          password: resolvedPassword,
+          // apiKey 仅作旧版字段镜像，grok2api 新版管理端使用用户名+密码登录。
+          apiKey: String(targetState.apiKey ?? targetState.password ?? '').trim(),
         };
       }
       if (flowId === 'grok' && targetId === 'sub2api') {
@@ -702,6 +713,12 @@
             ?? defaultOpenAiSignup.phoneSignupReloginAfterBindEmailEnabled
             ?? false
           ),
+          forcePasswordSignup: Boolean(
+            input?.forcePasswordSignup
+            ?? currentFlow.signup?.forcePasswordSignup
+            ?? defaultOpenAiSignup.forcePasswordSignup
+            ?? true
+          ),
         },
         plus: {
           plusModeEnabled: false,
@@ -752,8 +769,14 @@
         baseUrl: input?.kiroRsUrl ?? input?.kiroRsBaseUrl ?? currentFlow.targets['kiro-rs'].baseUrl,
         apiKey: input?.kiroRsKey ?? input?.kiroRsApiKey ?? currentFlow.targets['kiro-rs'].apiKey,
       };
+      const authMethod = String(
+        input?.kiroAuthMethod
+        ?? currentFlow.authMethod
+        ?? 'builder-id'
+      ).trim().toLowerCase() === 'github' ? 'github' : 'builder-id';
       return {
         ...currentFlow,
+        authMethod,
         targets: {
           ...currentFlow.targets,
           'kiro-rs': normalizeFlowTargetState('kiro', 'kiro-rs', targetSource, defaultKiroTargets['kiro-rs'] || {}),
@@ -786,7 +809,15 @@
       const grok2apiSource = {
         ...grok2apiCurrent,
         baseUrl: input?.grok2ApiUrl ?? grok2apiCurrent.baseUrl,
-        apiKey: input?.grok2ApiAdminKey ?? grok2apiCurrent.apiKey,
+        username: input?.grok2ApiUsername ?? grok2apiCurrent.username,
+        password: input?.grok2ApiPassword
+          ?? input?.grok2ApiAdminKey
+          ?? grok2apiCurrent.password
+          ?? grok2apiCurrent.apiKey,
+        apiKey: input?.grok2ApiPassword
+          ?? input?.grok2ApiAdminKey
+          ?? grok2apiCurrent.apiKey
+          ?? grok2apiCurrent.password,
       };
       const sharedSub2ApiCredentials = resolveSharedSub2ApiCredentials(input, nested, openAiFlow, currentFlow);
       const sub2apiCurrent = isPlainObject(currentFlow.targets.sub2api)
@@ -1019,6 +1050,7 @@
       next.customPassword = normalizedState.services.account.customPassword;
       next.signupMethod = openaiState.signup?.signupMethod || 'email';
       next.phoneSignupReloginAfterBindEmailEnabled = Boolean(openaiState.signup?.phoneSignupReloginAfterBindEmailEnabled);
+      next.forcePasswordSignup = openaiState.signup?.forcePasswordSignup !== false;
       next.plusModeEnabled = false;
       next.plusPaymentMethod = normalizePlusPaymentMethod(openaiState.plus?.plusPaymentMethod || 'paypal');
       const selectedOpenAiTargetId = getSelectedTargetId(normalizedState, 'openai');
@@ -1037,10 +1069,19 @@
       next.ipProxyMode = normalizedState.services.proxy.mode;
       next.kiroRsUrl = kiroState.targets['kiro-rs']?.baseUrl || '';
       next.kiroRsKey = kiroState.targets['kiro-rs']?.apiKey || '';
+      next.kiroAuthMethod = String(kiroState.authMethod || 'builder-id').trim().toLowerCase() === 'github'
+        ? 'github'
+        : 'builder-id';
       next.grokWebchat2ApiUrl = grokState.targets.webchat2api?.baseUrl || '';
       next.grokWebchat2ApiAdminKey = grokState.targets.webchat2api?.apiKey || '';
       next.grok2ApiUrl = grokState.targets.grok2api?.baseUrl || '';
-      next.grok2ApiAdminKey = grokState.targets.grok2api?.apiKey || '';
+      next.grok2ApiUsername = grokState.targets.grok2api?.username || 'admin';
+      next.grok2ApiPassword = grokState.targets.grok2api?.password
+        || grokState.targets.grok2api?.apiKey
+        || '';
+      next.grok2ApiAdminKey = grokState.targets.grok2api?.apiKey
+        || grokState.targets.grok2api?.password
+        || '';
       next.grokSub2apiGroupName = grokState.targets.sub2api?.sub2apiGroupName || '';
       next.grokSub2apiGroupNames = cloneValue(grokState.targets.sub2api?.sub2apiGroupNames || []);
       next.grokSub2apiAccountPriority = grokState.targets.sub2api?.sub2apiAccountPriority || 1;
@@ -1070,6 +1111,9 @@
           targetId,
           kiroRsUrl: targetSettings.baseUrl || '',
           kiroRsKey: targetSettings.apiKey || '',
+          kiroAuthMethod: String(
+            normalizedState?.flows?.kiro?.authMethod || 'builder-id'
+          ).trim().toLowerCase() === 'github' ? 'github' : 'builder-id',
         };
       }
       if (normalizedFlowId === 'openai') {
@@ -1081,6 +1125,7 @@
             targetId,
             targetSettings.accountDeliveryMode
           ),
+          forcePasswordSignup: normalizedState?.flows?.openai?.signup?.forcePasswordSignup !== false,
         };
       }
       return {

@@ -49,6 +49,7 @@ test('step 3 reuses existing generated password when rerunning the same email fl
         accountIdentifierType: 'email',
         accountIdentifier: 'keep@example.com',
         password: 'Secret123!',
+        forcePasswordSignup: true,
       },
     },
   ]);
@@ -120,6 +121,7 @@ test('step 3 supports phone-only signup identity when password page is present',
         accountIdentifierType: 'phone',
         accountIdentifier: '66959916439',
         password: 'PhoneSecret123!',
+        forcePasswordSignup: true,
       },
     },
   ]);
@@ -201,4 +203,54 @@ test('step 3 respects resolved email fallback when phone signup is unavailable',
 
   assert.equal(events.messages[0].payload.accountIdentifierType, 'email');
   assert.equal(events.messages[0].payload.accountIdentifier, 'fallback@example.com');
+});
+
+test("step 3 forwards forcePasswordSignup=false to the content payload", async () => {
+  const events = { messages: [] };
+  const executor = api.createStep3Executor({
+    addLog: async () => {},
+    chrome: { tabs: { update: async () => {} } },
+    ensureContentScriptReadyOnTab: async () => {},
+    generatePassword: () => "Generated123!",
+    getTabId: async () => 88,
+    isTabAlive: async () => true,
+    sendToContentScript: async (_source, message) => { events.messages.push(message); },
+    setPasswordState: async () => {},
+    setState: async () => {},
+    OPENAI_AUTH_INJECT_FILES: [],
+  });
+
+  await executor.executeStep3({
+    email: "otp@example.com",
+    password: "Secret123!",
+    forcePasswordSignup: false,
+    accounts: [],
+  });
+
+  assert.equal(events.messages[0].payload.forcePasswordSignup, false);
+});
+
+test("step 3 reads forcePasswordSignup from settingsState when flat key is absent", async () => {
+  const events = { messages: [] };
+  const executor = api.createStep3Executor({
+    addLog: async () => {},
+    chrome: { tabs: { update: async () => {} } },
+    ensureContentScriptReadyOnTab: async () => {},
+    generatePassword: () => "Generated123!",
+    getTabId: async () => 88,
+    isTabAlive: async () => true,
+    sendToContentScript: async (_source, message) => { events.messages.push(message); },
+    setPasswordState: async () => {},
+    setState: async () => {},
+    OPENAI_AUTH_INJECT_FILES: [],
+  });
+
+  await executor.executeStep3({
+    email: "otp2@example.com",
+    password: "Secret123!",
+    settingsState: { flows: { openai: { signup: { forcePasswordSignup: false } } } },
+    accounts: [],
+  });
+
+  assert.equal(events.messages[0].payload.forcePasswordSignup, false);
 });

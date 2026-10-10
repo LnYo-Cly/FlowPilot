@@ -100,6 +100,8 @@
       addLog = async () => {},
       chrome: chromeApi = globalThis.chrome,
       completeNodeFromBackground,
+      dismissChatGptOnboarding = null,
+      reloadChatGptSessionTab = null,
       getErrorMessage = (error) => error?.message || String(error || '未知错误'),
       registrationSuccessWaitMs = DEFAULT_REGISTRATION_SUCCESS_WAIT_MS,
       sleepWithStop = async (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, Number(ms) || 0))),
@@ -141,12 +143,47 @@
       }
     }
 
+    async function dismissOnboardingIfPresent(state = {}, { quiet = false } = {}) {
+      if (typeof dismissChatGptOnboarding !== 'function') {
+        return;
+      }
+      const result = await Promise.resolve(dismissChatGptOnboarding(state)).catch((error) => ({
+        ok: false,
+        error: getErrorMessage(error),
+      }));
+      if (result?.clicked) {
+        await addLog(`步骤 6：检测到「你已准备就绪」注册引导页，已自动点击「${result?.label || '继续'}」进入 ChatGPT。`, 'ok');
+      } else if (result?.found && result?.ok === false) {
+        await addLog(`步骤 6：注册引导页「继续」点击失败：${result?.error || '未知原因'}`, 'warn');
+      } else if (!quiet && result?.ok === false && result?.error) {
+        await addLog(`步骤 6：注册引导页检查未执行（${result.error}），由后续步骤兜底处理。`, 'info');
+      }
+    }
+
+    async function reloadSessionTabIfPresent(state = {}) {
+      if (typeof reloadChatGptSessionTab !== 'function') {
+        return;
+      }
+      const result = await Promise.resolve(reloadChatGptSessionTab(state)).catch((error) => ({
+        ok: false,
+        error: getErrorMessage(error),
+      }));
+      if (result?.reloaded) {
+        await addLog('步骤 6：已刷新 chatgpt.com 标签页，确保会话接口可用。', 'ok');
+      } else if (result?.ok === false && result?.error) {
+        await addLog(`步骤 6：chatgpt.com 刷新未执行（${result.error}），由后续步骤兜底处理。`, 'info');
+      }
+    }
+
     async function executeStep6(state = {}) {
       const waitMs = Math.max(0, Math.floor(Number(registrationSuccessWaitMs) || 0));
+      void dismissOnboardingIfPresent(state, { quiet: true });
       if (waitMs > 0) {
         await addLog(`步骤 6：等待 ${Math.round(waitMs / 1000)} 秒，确认注册成功并让页面稳定...`, 'info');
         await sleepWithStop(waitMs);
       }
+      await reloadSessionTabIfPresent(state);
+      await dismissOnboardingIfPresent(state);
       await clearCookiesIfEnabled(state);
       await addLog('步骤 6：注册成功等待完成，准备继续获取 OAuth 链接并登录。', 'ok');
       await completeNodeFromBackground('wait-registration-success');

@@ -46,6 +46,7 @@
   },
   "baseGroups": [
     "openai-account-delivery",
+    "openai-signup-options",
     "openai-plus",
     "shared-auto-run",
     "openai-oauth",
@@ -123,7 +124,8 @@
   "settingsDefaults": {
     "signup": {
       "signupMethod": "email",
-      "phoneSignupReloginAfterBindEmailEnabled": false
+      "phoneSignupReloginAfterBindEmailEnabled": false,
+      "forcePasswordSignup": true
     },
     "plus": {
       "plusModeEnabled": false,
@@ -431,7 +433,8 @@
     "flows/openai/content/chatgpt-session": {
       "sourceId": "openai-session",
       "commands": [
-        "OPENAI_SESSION_GET_CURRENT"
+        "OPENAI_SESSION_GET_CURRENT",
+        "OPENAI_SESSION_DISMISS_ONBOARDING"
       ]
     },
     "flows/openai/content/paypal-flow": {
@@ -464,6 +467,13 @@
       "label": "账号交付",
       "rowIds": [
         "row-account-delivery-mode"
+      ]
+    },
+    "openai-signup-options": {
+      "id": "openai-signup-options",
+      "label": "注册选项",
+      "rowIds": [
+        "row-force-password-signup"
       ]
     },
     "openai-target-cpa": {

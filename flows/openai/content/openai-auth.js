@@ -1318,7 +1318,8 @@ async function ensureSignupPhoneEntryReady(timeout = 25000) {
   throw new Error('当前页面没有可用的手机号注册入口，也不在密码页。URL: ' + location.href);
 }
 
-async function ensureSignupPasswordPageReady(timeout = 20000) {
+async function ensureSignupPasswordPageReady(timeout = 20000, options = {}) {
+  const clickUsePasswordFallback = options?.clickUsePasswordFallback !== false;
   const start = Date.now();
   let usePasswordClickedAt = 0;
 
@@ -1333,8 +1334,8 @@ async function ensureSignupPasswordPageReady(timeout = 20000) {
       };
     }
     // 新版注册默认验证码直达：发现「使用密码继续」入口就点，扭回密码页。
-    // 节流 2.5s 防止 SPA 导航期间重复点击。
-    if (Date.now() - usePasswordClickedAt >= 2500) {
+    // 节流 2.5s 防止 SPA 导航期间重复点击。非强制密码模式下不主动点击。
+    if (clickUsePasswordFallback && Date.now() - usePasswordClickedAt >= 2500) {
       const usePasswordTrigger = findSignupUsePasswordTrigger();
       if (usePasswordTrigger) {
         usePasswordClickedAt = Date.now();
@@ -1346,6 +1347,27 @@ async function ensureSignupPasswordPageReady(timeout = 20000) {
   }
 
   throw new Error('等待进入密码页超时。URL: ' + location.href);
+}
+
+// 步骤 2 提交邮箱后的落地页等待：新版注册可能直接跳验证码页，
+// 也可能落在密码页。等出其中任一终态（或后续阶段）再返回，供步骤 3 分流。
+async function waitForSignupLandingState(timeout = 20000) {
+  const start = Date.now();
+  while (Date.now() - start < timeout) {
+    throwIfStopped();
+    const snapshot = inspectSignupEntryState();
+    if ([
+      'password_page',
+      'verification_page',
+      'phone_verification_page',
+      'profile_page',
+      'logged_in_home',
+    ].includes(snapshot.state)) {
+      return snapshot;
+    }
+    await sleep(200);
+  }
+  return inspectSignupEntryState();
 }
 
 async function fillSignupEmailAndContinue(email, step) {
@@ -1410,7 +1432,7 @@ async function fillSignupEmailAndContinue(email, step) {
     throw new Error(`步骤 ${step}：未找到可点击的“继续”按钮。URL: ${location.href}`);
   }
 
-  log(`步骤 ${step}：邮箱已准备提交，正在前往密码页...`);
+  log(`步骤 ${step}：邮箱已提交，等待落地页（密码页或验证码直达页）...`);
   window.setTimeout(async () => {
     try {
       throwIfStopped();
@@ -2748,23 +2770,55 @@ async function step3_fillEmailPassword(payload) {
     : 'email';
   const accountIdentifier = String(payload?.accountIdentifier || email || payload?.phoneNumber || '').trim();
 
+  // 强制密码：勾选后验证码直达页会自动点「使用密码继续」扭回密码页；
+  // 未勾选则验证码直达页按已跳过处理，由步骤 4 走验证码注册。
+  const forcePasswordSignup = payload?.forcePasswordSignup !== false;
+
   let snapshot = inspectSignupEntryState();
   if (snapshot.state === 'entry_home') {
     throw new Error('当前仍停留在 ChatGPT 官网首页，请先完成步骤 2。');
   }
 
-  // 新版注册默认验证码直达；优先点「使用密码继续」（指向 /create-account/password）
-  // 强制走密码分支，保证产出的账号带可登录密码。找不到该入口才退回原跳过逻辑。
-  if (snapshot.state === 'verification_page' || snapshot.state === 'phone_verification_page') {
+  log(`步骤 3：落地页检测 → 状态=${snapshot.state}，URL=${snapshot.url || location.href}，强制密码=${forcePasswordSignup ? '开' : '关'}`);
+
+  // 仍停在邮箱输入页（重跑或步骤 2 跳转未完成）→ 重新提交并等待落地终态。
+  if (snapshot.state === 'email_entry') {
+    const transition = await fillSignupEmailAndContinue(email, 3);
+    if (transition.alreadyOnPasswordPage) {
+      snapshot = inspectSignupEntryState();
+    } else {
+      await sleep(1200);
+      snapshot = await waitForSignupLandingState(20000);
+      log(`步骤 3：邮箱重新提交后落地 → 状态=${snapshot.state}，URL=${snapshot.url || location.href}`);
+    }
+  }
+
+  // 验证码直达页：强制密码开启 → 点「使用密码继续」扭回密码页，失败即报错；
+  // 未开启 → 交给下方跳过分支走验证码注册。
+  if (
+    forcePasswordSignup
+    && (snapshot.state === 'verification_page' || snapshot.state === 'phone_verification_page')
+  ) {
+    const landingUrl = snapshot.url || location.href;
     const usePasswordTrigger = findSignupUsePasswordTrigger();
     if (usePasswordTrigger) {
-      log('步骤 3：检测到验证码直达页，正在点击「使用密码继续」切换到密码注册...');
+      log(`步骤 3：验证码直达页（${landingUrl}），正在点击「使用密码继续」切换到密码注册...`);
       await performOperationWithDelay({ stepKey: 'fill-password', kind: 'click', label: 'signup-use-password' }, async () => {
         simulateClick(usePasswordTrigger);
       });
-      await ensureSignupPasswordPageReady(8000).catch(() => null);
-      snapshot = inspectSignupEntryState();
+    } else {
+      log(`步骤 3：验证码直达页（${landingUrl}）暂未找到「使用密码继续」入口，等待页面稳定后继续尝试...`, 'warn');
     }
+    await ensureSignupPasswordPageReady(18000).catch((error) => {
+      log(`步骤 3：等待密码页超时：${error?.message || error}`, 'warn');
+      return null;
+    });
+    snapshot = inspectSignupEntryState();
+    if (snapshot.state !== 'password_page' || !snapshot.passwordInput) {
+      logSignupPasswordDiagnostics('步骤 3：强制密码模式未能切换到密码页');
+      throw new Error(`步骤 3：强制密码已开启，但未找到「使用密码继续」入口或密码页加载失败。当前状态=${snapshot.state}，URL=${location.href}`);
+    }
+    log(`步骤 3：已切换到密码页，URL=${snapshot.url || location.href}`);
   }
 
   if (
@@ -2782,23 +2836,17 @@ async function step3_fillEmailPassword(payload) {
       ) ? Date.now() : null,
       skippedPasswordPage: true,
       deferredSubmit: false,
+      landingState: snapshot.state,
+      landingUrl: snapshot.url || location.href,
+      forcePasswordSignup,
     };
-    log('步骤 3：当前页面已进入验证码阶段，密码页按已跳过处理。', 'warn');
+    log(`步骤 3：当前页面已进入验证码或后续阶段（状态=${snapshot.state}，URL=${snapshot.url || location.href}），密码页按已跳过处理${forcePasswordSignup ? '' : '（强制密码未开启）'}。`, 'warn');
     reportComplete(3, completionPayload);
     return completionPayload;
   }
 
-  if (snapshot.state === 'email_entry') {
-    const transition = await fillSignupEmailAndContinue(email, 3);
-    if (!transition.alreadyOnPasswordPage) {
-      await sleep(1200);
-      await ensureSignupPasswordPageReady();
-    }
-    snapshot = inspectSignupEntryState();
-  }
-
   if (snapshot.state !== 'password_page' || !snapshot.passwordInput) {
-    await ensureSignupPasswordPageReady();
+    await ensureSignupPasswordPageReady(20000, { clickUsePasswordFallback: forcePasswordSignup });
     snapshot = inspectSignupEntryState();
   }
 
@@ -2842,6 +2890,9 @@ async function step3_fillEmailPassword(payload) {
     passwordPageUrl: passwordPageInfo.url,
     passwordPagePath: passwordPageInfo.path,
     passwordPageMode: passwordPageInfo.mode,
+    landingState: 'password_page',
+    landingUrl: snapshot.url || location.href,
+    forcePasswordSignup,
     ...(isLoginPasswordPage ? { passwordLoginFlow: true } : {}),
   };
 

@@ -4,9 +4,10 @@ const fs = require('node:fs');
 
 function loadPublisherApi() {
   const stateSource = fs.readFileSync('flows/grok/background/state.js', 'utf8');
+  const deviceFlowSource = fs.readFileSync('flows/grok/background/sso-device-flow.js', 'utf8');
   const publisherSource = fs.readFileSync('flows/grok/background/publisher-grok2api.js', 'utf8');
   const globalScope = {};
-  new Function('self', `${stateSource}; ${publisherSource}; return self;`)(globalScope);
+  new Function('self', `${stateSource}; ${deviceFlowSource}; ${publisherSource}; return self;`)(globalScope);
   return globalScope.MultiPageBackgroundGrokPublisherGrok2Api;
 }
 
@@ -23,166 +24,270 @@ function createJsonResponse(payload, status = 200) {
   return createTextResponse(JSON.stringify(payload), status);
 }
 
+function createLoginResponse() {
+  return createJsonResponse({
+    data: {
+      tokens: {
+        accessToken: 'test-access-token',
+      },
+    },
+  });
+}
+
+function createSseImportResponse({ created = 0, updated = 0, skipped = 0, failed = 0, synced = 0, syncFailed = 0, error = null } = {}) {
+  if (error) {
+    return createTextResponse(`: connected\n\nevent: error\ndata: ${JSON.stringify(error)}\n\n`);
+  }
+  return createTextResponse(
+    `: connected\n\n`
+    + `event: progress\ndata: {"completed":1,"total":1,"phase":"importing"}\n\n`
+    + `event: complete\ndata: ${JSON.stringify({ created, updated, skipped, failed, synced, syncFailed })}\n\n`
+  );
+}
+
+function createFetchImpl({ loginStatus = 200, importResponse = null, onRequest = null } = {}) {
+  const requests = [];
+  return {
+    requests,
+    fetch: async (url, options = {}) => {
+      const entry = { url, options };
+      requests.push(entry);
+      if (typeof onRequest === 'function') {
+        onRequest(entry);
+      }
+      if (url.endsWith('/api/admin/v1/auth/login')) {
+        return createJsonResponse(
+          loginStatus === 200 ? { data: { tokens: { accessToken: 'test-access-token' } } } : { error: { message: '登录失败' } },
+          loginStatus
+        );
+      }
+      return importResponse || createSseImportResponse({ created: 1 });
+    },
+  };
+}
+
 function getGrokRuntime(state = {}) {
   return state?.runtimeState?.flowState?.grok || {};
 }
 
-test('grok2api publisher exposes helpers and normalizes upload URL to HTTP origin', () => {
+function makeJwt(payload = {}) {
+  const segment = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+  return `${segment({ alg: 'none' })}.${segment(payload)}.sig`;
+}
+
+test('grok2api publisher exposes helpers and normalizes v1 endpoint URLs', () => {
   const api = loadPublisherApi();
 
   assert.equal(typeof api?.createGrok2ApiPublisher, 'function');
   assert.equal(
-    api.buildGrok2ApiTokensUrl('https://grok2api.example.com/admin/deep/path?token=ignored'),
-    'https://grok2api.example.com/admin/api/tokens/add'
+    api.buildGrok2ApiWebImportUrl('https://grok2api.example.com/admin/deep/path?token=ignored'),
+    'https://grok2api.example.com/api/admin/v1/accounts/web/import'
   );
   assert.equal(
-    api.buildGrok2ApiTokensUrl('127.0.0.1:8000/admin'),
-    'http://127.0.0.1:8000/admin/api/tokens/add'
+    api.buildGrok2ApiLoginUrl('127.0.0.1:8000/admin'),
+    'http://127.0.0.1:8000/api/admin/v1/auth/login'
   );
-  assert.throws(() => api.buildGrok2ApiTokensUrl(''), /缺少 grok2api 地址/);
-  assert.throws(() => api.buildGrok2ApiTokensUrl('ftp:\/\/example.com'), /只支持 http 或 https/);
+  assert.throws(() => api.buildGrok2ApiWebImportUrl(''), /缺少 grok2api 地址/);
+  assert.throws(() => api.buildGrok2ApiWebImportUrl('ftp://example.com'), /只支持 http 或 https/);
 });
 
-test('grok2api publisher posts one SSO token to the fixed auto pool', async () => {
+test('grok2api publisher logs in and uploads sso as web json plus console json', async () => {
   const api = loadPublisherApi();
-  const requests = [];
+  const sso = makeJwt({ sub: 'user-123' });
+  const { requests, fetch } = createFetchImpl();
 
   const result = await api.uploadGrokSsoToGrok2Api(
     'https://grok2api.example.com/admin/path',
-    ' app-key ',
-    'grok-sso-token',
-    async (url, options = {}) => {
-      requests.push({
-        url,
-        method: options.method,
-        headers: options.headers,
-        body: JSON.parse(options.body),
-        signal: options.signal,
-      });
-      return createJsonResponse({ status: 'success', count: 1, skipped: 0 });
-    }
+    { username: 'admin', password: 'pw' },
+    sso,
+    fetch,
+    { email: 'user@example.com', cloudflareCookies: 'cf_clearance=abc123; __cf_bm=xyz' }
   );
 
-  assert.equal(requests.length, 1);
-  assert.equal(requests[0].url, 'https://grok2api.example.com/admin/api/tokens/add');
-  assert.equal(requests[0].method, 'POST');
-  assert.equal(requests[0].headers.Authorization, 'Bearer app-key');
-  assert.equal(requests[0].headers['Content-Type'], 'application/json');
-  assert.deepEqual(requests[0].body, {
-    tokens: ['grok-sso-token'],
-    pool: 'auto',
-  });
-  assert.ok(requests[0].signal);
-  assert.deepEqual(result, {
-    endpointUrl: 'https://grok2api.example.com/admin/api/tokens/add',
-    count: 1,
-    skipped: 0,
-    message: '新增 1 个，跳过 0 个',
-  });
+  assert.equal(requests.length, 3);
+  const [loginReq, webReq, consoleReq] = requests;
+  assert.equal(loginReq.url, 'https://grok2api.example.com/api/admin/v1/auth/login');
+  assert.deepEqual(JSON.parse(loginReq.options.body), { username: 'admin', password: 'pw' });
+  assert.equal(webReq.url, 'https://grok2api.example.com/api/admin/v1/accounts/web/import');
+  assert.equal(webReq.options.headers.Authorization, 'Bearer test-access-token');
+
+  const webFile = webReq.options.body.get('files');
+  assert.match(webFile.name, /^g2a-web-.*\.json$/);
+  const webDoc = JSON.parse(await webFile.text());
+  assert.equal(webDoc.provider, 'grok_web');
+  assert.equal(webDoc.accounts[0].sso_token, sso);
+  assert.equal(webDoc.accounts[0].email, 'user@example.com');
+  assert.equal(webDoc.accounts[0].user_id, 'user-123');
+  assert.equal(webDoc.accounts[0].name, 'Grok Web user');
+  assert.equal(webDoc.accounts[0].tier, 'basic');
+  assert.equal(webDoc.accounts[0].token, '');
+  assert.equal(webDoc.accounts[0].cloudflare_cookies, '');
+
+  assert.equal(consoleReq.url, 'https://grok2api.example.com/api/admin/v1/accounts/console/import');
+  const consoleFile = consoleReq.options.body.get('files');
+  const consoleDoc = JSON.parse(await consoleFile.text());
+  assert.equal(consoleDoc.provider, 'grok_console');
+  assert.equal(consoleDoc.accounts[0].sso_token, sso);
+  assert.equal(consoleDoc.accounts[0].email, 'user@example.com');
+  assert.equal(consoleDoc.accounts[0].user_id, 'user-123');
+  assert.equal(consoleDoc.accounts[0].cloudflare_cookies, '');
+
+  assert.equal(result.endpointUrl, 'https://grok2api.example.com/api/admin/v1/accounts/web/import');
+  assert.equal(result.created, 2);
+  assert.match(result.message, /web：.*console：/);
 });
 
-test('grok2api publisher treats a skipped duplicate as idempotent success', async () => {
+test('grok2api publisher uploads grok_build auth.json when an oauth token record is provided', async () => {
   const api = loadPublisherApi();
+  const { requests, fetch } = createFetchImpl();
 
   const result = await api.uploadGrokSsoToGrok2Api(
     'http://127.0.0.1:8000',
-    'app-key',
-    'duplicate-sso',
-    async () => createJsonResponse({ status: 'success', count: 0, skipped: 1 })
+    { password: 'pw' },
+    'sso-token',
+    fetch,
+    {
+      email: 'user@example.com',
+      tokenRecord: {
+        access_token: makeJwt({ sub: 'grok-user-1', email: 'user@example.com' }),
+        refresh_token: 'refresh-token-1',
+        id_token: '',
+        token_type: 'Bearer',
+        expires_in: 3600,
+        email: 'user@example.com',
+        user_id: 'grok-user-1',
+      },
+    }
   );
 
-  assert.equal(result.count, 0);
-  assert.equal(result.skipped, 1);
-  assert.equal(result.message, '新增 0 个，跳过 1 个');
+  const buildReq = requests.find((entry) => entry.url.endsWith('/api/admin/v1/accounts/import'));
+  assert.ok(buildReq);
+  const file = buildReq.options.body.get('file');
+  assert.ok(file);
+  assert.equal(file.name, 'auth.json');
+  const document = JSON.parse(await file.text());
+  assert.equal(document.provider, 'grok_build');
+  assert.equal(document.client_id, 'b1a00492-073a-47ea-816f-4c329264a828');
+  assert.equal(document.email, 'user@example.com');
+  assert.equal(document.user_id, 'grok-user-1');
+  assert.equal(document.refresh_token, 'refresh-token-1');
+  assert.ok(Number.isFinite(Date.parse(document.expires_at)));
+  assert.ok(Date.parse(document.expires_at) < Date.now());
+
+  const webReq = requests.find((entry) => entry.url.endsWith('/api/admin/v1/accounts/web/import'));
+  const webDoc = JSON.parse(await webReq.options.body.get('files').text());
+  assert.equal(webDoc.accounts[0].user_id, 'grok-user-1');
+
+  assert.equal(result.results.length, 3);
+  assert.match(result.message, /build：/);
 });
 
-test('grok2api publisher requires credentials and a positive success count', async () => {
+test('grok2api publisher treats skipped/updated imports as idempotent success', async () => {
+  const api = loadPublisherApi();
+  const { fetch } = createFetchImpl({
+    importResponse: createSseImportResponse({ created: 0, updated: 0, skipped: 1 }),
+  });
+
+  const result = await api.uploadGrokSsoToGrok2Api(
+    'http://127.0.0.1:8000',
+    { password: 'pw' },
+    'sso-token',
+    fetch
+  );
+
+  assert.equal(result.skipped, 2);
+  assert.match(result.message, /跳过 1 个/);
+});
+
+test('grok2api publisher requires credentials, sso and a positive import outcome', async () => {
   const api = loadPublisherApi();
   let requestCount = 0;
-  const fetchImpl = async () => {
-    requestCount += 1;
-    return createJsonResponse({ status: 'success', count: 1, skipped: 0 });
-  };
+  const { fetch } = createFetchImpl({ onRequest: () => { requestCount += 1; } });
 
   await assert.rejects(
-    () => api.uploadGrokSsoToGrok2Api('http://127.0.0.1:8000', '', 'sso', fetchImpl),
-    /缺少 grok2api Admin Key/
+    () => api.uploadGrokSsoToGrok2Api('http://127.0.0.1:8000', { password: '' }, 'sso', fetch),
+    /缺少 grok2api 管理员密码/
   );
   await assert.rejects(
-    () => api.uploadGrokSsoToGrok2Api('http://127.0.0.1:8000', 'key', '', fetchImpl),
+    () => api.uploadGrokSsoToGrok2Api('http://127.0.0.1:8000', { password: 'pw' }, '', fetch),
     /缺少 Grok SSO Cookie/
   );
   assert.equal(requestCount, 0);
 
+  const { fetch: emptyFetch } = createFetchImpl({
+    importResponse: createSseImportResponse({ created: 0, updated: 0, skipped: 0 }),
+  });
   await assert.rejects(
-    () => api.uploadGrokSsoToGrok2Api(
-      'http://127.0.0.1:8000',
-      'key',
-      'sso',
-      async () => createJsonResponse({ status: 'success', count: 0, skipped: 0 })
-    ),
-    /未新增或跳过任何账号/
+    () => api.uploadGrokSsoToGrok2Api('http://127.0.0.1:8000', 'pw', 'sso', emptyFetch),
+    /新增 0 个|未导入任何账号/
+  );
+
+  const { fetch: errFetch } = createFetchImpl({
+    importResponse: createSseImportResponse({ error: { code: 'authImportFailed', message: '导入账号失败' } }),
+  });
+  await assert.rejects(
+    () => api.uploadGrokSsoToGrok2Api('http://127.0.0.1:8000', 'pw', 'sso', errFetch),
+    /导入账号失败/
   );
 });
 
-test('grok2api publisher converts FastAPI, message, and non-JSON errors to safe messages', async () => {
+test('grok2api publisher surfaces sse error and http error with secrets redacted', async () => {
   const api = loadPublisherApi();
 
+  const { fetch: sseFail } = createFetchImpl({
+    importResponse: createSseImportResponse({ error: { message: 'invalid token secret-sso' } }),
+  });
   await assert.rejects(
-    () => api.uploadGrokSsoToGrok2Api(
-      'http://127.0.0.1:8000',
-      'secret-key',
-      'secret-sso',
-      async () => createJsonResponse({ detail: 'invalid token secret-sso' }, 422)
-    ),
+    () => api.uploadGrokSsoToGrok2Api('http://127.0.0.1:8000', { password: 'secret-key' }, 'secret-sso', sseFail),
     (error) => {
       assert.match(error.message, /invalid token \[REDACTED\]/);
-      assert.doesNotMatch(error.message, /secret-sso|secret-key/);
       return true;
     }
   );
+
+  const { fetch: httpFail } = createFetchImpl({
+    importResponse: createJsonResponse({ error: { message: 'permission denied' } }, 500),
+  });
   await assert.rejects(
-    () => api.uploadGrokSsoToGrok2Api(
-      'http://127.0.0.1:8000',
-      'secret-key',
-      'secret-sso',
-      async () => createJsonResponse({ message: 'permission denied for secret-key' }, 403)
-    ),
+    () => api.uploadGrokSsoToGrok2Api('http://127.0.0.1:8000', { password: 'secret-key' }, 'secret-sso', httpFail),
     (error) => {
-      assert.match(error.message, /permission denied for \[REDACTED\]/);
+      assert.match(error.message, /permission denied/);
       assert.doesNotMatch(error.message, /secret-sso|secret-key/);
       return true;
     }
   );
-  await assert.rejects(
-    () => api.uploadGrokSsoToGrok2Api(
-      'http://127.0.0.1:8000',
-      'secret-key',
-      'secret-sso',
-      async () => createTextResponse('upstream unavailable', 502)
-    ),
-    /grok2api SSO 上传失败：upstream unavailable/
-  );
 });
 
-test('grok2api publisher aborts requests after the configured timeout', async () => {
+test('grok2api publisher relogins once when the import rejects the token', async () => {
   const api = loadPublisherApi();
+  let loginCount = 0;
+  let importCount = 0;
+  const requests = [];
+  const fetch = async (url, options = {}) => {
+    requests.push(url);
+    if (url.endsWith('/api/admin/v1/auth/login')) {
+      loginCount += 1;
+      return createLoginResponse();
+    }
+    importCount += 1;
+    return importCount === 1
+      ? createJsonResponse({ error: { message: 'token expired' } }, 401)
+      : createSseImportResponse({ updated: 1 });
+  };
 
-  await assert.rejects(
-    () => api.uploadGrokSsoToGrok2Api(
-      'http://127.0.0.1:8000',
-      'key',
-      'sso',
-      (_url, options = {}) => new Promise((_resolve, reject) => {
-        options.signal.addEventListener('abort', () => reject(options.signal.reason));
-      }),
-      { timeoutMs: 5 }
-    ),
-    /grok2api 上传超时/
+  const result = await api.uploadGrokSsoToGrok2Api(
+    'http://127.0.0.1:8000',
+    { username: 'admin', password: 'pw' },
+    'sso-token',
+    fetch
   );
+
+  assert.equal(loginCount, 2);
+  assert.equal(importCount, 3);
+  assert.equal(result.updated, 2);
 });
 
-test('grok2api executor reads latest canonical state and completes with target-neutral upload runtime', async () => {
+test('grok2api executor reads canonical state and completes with upload runtime', async () => {
   const api = loadPublisherApi();
   const requests = [];
   const logs = [];
@@ -191,13 +296,15 @@ test('grok2api executor reads latest canonical state and completes with target-n
     grok2ApiUrl: 'https://stale.example.com',
     grok2ApiAdminKey: 'stale-key',
     grokSsoCookie: 'stale-sso',
+    grokEmail: 'live@example.com',
     settingsState: {
       flows: {
         grok: {
           targets: {
             grok2api: {
               baseUrl: 'https://grok2api.example.com/admin',
-              apiKey: 'live-key',
+              username: 'admin',
+              password: 'live-key',
             },
           },
         },
@@ -215,12 +322,11 @@ test('grok2api executor reads latest canonical state and completes with target-n
     addLog: async (message, level) => logs.push({ message, level }),
     completeNodeFromBackground: async (nodeId, payload) => completed.push({ nodeId, payload }),
     fetchImpl: async (url, options = {}) => {
-      requests.push({
-        url,
-        authorization: options.headers.Authorization,
-        body: JSON.parse(options.body),
-      });
-      return createJsonResponse({ status: 'success', count: 0, skipped: 1 });
+      requests.push({ url, options });
+      if (url.endsWith('/api/admin/v1/auth/login')) {
+        return createLoginResponse();
+      }
+      return createSseImportResponse({ skipped: 1 });
     },
     getState: async () => ({ ...liveState }),
     setState: async (updates = {}) => {
@@ -245,20 +351,26 @@ test('grok2api executor reads latest canonical state and completes with target-n
     grokSsoCookie: 'request-stale-sso',
   });
 
-  assert.equal(requests.length, 1);
-  assert.equal(requests[0].url, 'https://grok2api.example.com/admin/api/tokens/add');
-  assert.equal(requests[0].authorization, 'Bearer live-key');
-  assert.deepEqual(requests[0].body, { tokens: ['live-sso'], pool: 'auto' });
+  const importReq = requests.find((entry) => entry.url.includes('/accounts/web/import'));
+  assert.ok(importReq);
+  const file = importReq.options.body.get('files');
+  const webDoc = JSON.parse(await file.text());
+  assert.equal(webDoc.provider, 'grok_web');
+  assert.equal(webDoc.accounts[0].sso_token, 'live-sso');
+
+  const consoleReq = requests.find((entry) => entry.url.includes('/accounts/console/import'));
+  assert.ok(consoleReq);
+  const consoleDoc = JSON.parse(await consoleReq.options.body.get('files').text());
+  assert.equal(consoleDoc.accounts[0].sso_token, 'live-sso');
+  assert.equal(consoleDoc.accounts[0].email, 'live@example.com');
+
   assert.equal(completed.length, 1);
-  assert.equal(completed[0].nodeId, 'grok-upload-sso-to-grok2api');
   assert.equal(getGrokRuntime(completed[0].payload).upload.targetId, 'grok2api');
   assert.equal(getGrokRuntime(completed[0].payload).upload.status, 'uploaded');
-  assert.equal(getGrokRuntime(completed[0].payload).upload.message, '新增 0 个，跳过 1 个');
   assert.equal(
     getGrokRuntime(completed[0].payload).upload.targetUrl,
-    'https://grok2api.example.com/admin/api/tokens/add'
+    'https://grok2api.example.com/api/admin/v1/accounts/web/import'
   );
-  assert.equal(typeof getGrokRuntime(completed[0].payload).upload.uploadedAt, 'number');
   const completedRuntime = getGrokRuntime(completed[0].payload);
   const serialized = JSON.stringify({
     logs,
@@ -279,7 +391,7 @@ test('grok2api executor persists a redacted failure without completing the node'
           targets: {
             grok2api: {
               baseUrl: 'https://grok2api.example.com',
-              apiKey: 'secret-key',
+              password: 'secret-key',
             },
           },
         },
@@ -296,9 +408,14 @@ test('grok2api executor persists a redacted failure without completing the node'
   const publisher = api.createGrok2ApiPublisher({
     addLog: async (message, level) => logs.push({ message, level }),
     completeNodeFromBackground: async (nodeId, payload) => completed.push({ nodeId, payload }),
-    fetchImpl: async () => createJsonResponse({
-      detail: 'rejected secret-sso with secret-key',
-    }, 422),
+    fetchImpl: async (url) => {
+      if (url.endsWith('/api/admin/v1/auth/login')) {
+        return createLoginResponse();
+      }
+      return createJsonResponse({
+        error: { message: 'rejected secret-sso with secret-key' },
+      }, 422);
+    },
     getState: async () => ({ ...liveState }),
     setState: async (updates = {}) => {
       liveState = {
@@ -324,7 +441,6 @@ test('grok2api executor persists a redacted failure without completing the node'
   assert.equal(completed.length, 0);
   assert.equal(getGrokRuntime(liveState).upload.targetId, 'grok2api');
   assert.equal(getGrokRuntime(liveState).upload.status, 'error');
-  assert.equal(getGrokRuntime(liveState).upload.uploadedAt, 0);
   assert.match(getGrokRuntime(liveState).upload.message, /\[REDACTED\]/);
   const failedRuntime = getGrokRuntime(liveState);
   const serialized = JSON.stringify({

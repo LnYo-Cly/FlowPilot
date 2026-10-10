@@ -55,6 +55,8 @@
         ],
         defaultState: {
           baseUrl: '',
+          username: 'admin',
+          password: '',
           apiKey: '',
         },
       },
@@ -146,6 +148,7 @@
           'grok-submit-verification-code',
           'grok-submit-profile',
           'grok-extract-sso-cookie',
+          'grok-dismiss-tos-gate',
         ],
       },
       'flows/grok/background/register-runner': {
@@ -156,6 +159,7 @@
           'grok-submit-verification-code',
           'grok-submit-profile',
           'grok-extract-sso-cookie',
+          'grok-dismiss-tos-gate',
         ],
       },
       'flows/grok/background/publisher-webchat2api': {
@@ -194,6 +198,8 @@
         },
         grok2api: {
           baseUrl: '',
+          username: 'admin',
+          password: '',
           apiKey: '',
         },
         sub2api: {
@@ -229,6 +235,7 @@
         label: 'grok2api',
         rowIds: [
           'row-grok2api-url',
+          'row-grok2api-user',
           'row-grok2api-key',
         ],
       },
@@ -242,6 +249,7 @@
           'row-sub2api-connection-test',
           'row-grok-sub2api-grok2api-upload',
           'row-grok2api-url',
+          'row-grok2api-user',
           'row-grok2api-key',
           'row-grok-sub2api-group',
           'row-grok-sub2api-account-priority',

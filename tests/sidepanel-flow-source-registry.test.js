@@ -613,6 +613,7 @@ return {
       openaiWebchatUploadEnabled: false,
       grokSub2apiGrok2ApiUploadEnabled: false,
       settingsState: undefined,
+      forcePasswordSignup: true,
       signupMethod: 'email',
       phoneSignupReloginAfterBindEmailEnabled: false,
       accountContributionEnabled: false,

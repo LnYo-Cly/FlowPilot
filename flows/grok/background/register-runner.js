@@ -375,16 +375,36 @@
       if (!chrome?.cookies?.get) {
         return '';
       }
-      const candidates = [
-        { url: 'https://x.ai/', name: 'sso' },
-        { url: 'https://grok.com/', name: 'sso' },
-        { url: 'https://accounts.x.ai/', name: 'sso' },
+      const urls = [
+        'https://x.ai/',
+        'https://grok.com/',
+        'https://accounts.x.ai/',
       ];
-      for (const details of candidates) {
-        const cookie = await chrome.cookies.get(details).catch(() => null);
-        const value = cleanString(cookie?.value);
-        if (value) {
-          return value;
+      // 少数场景只有 sso-rw；sso 优先。
+      const names = ['sso', 'sso-rw'];
+      // 自动化标签页可能跑在无痕窗口，sso 会落在无痕 cookie store——必须遍历所有 store，
+      // 否则 chrome.cookies.get 默认只查常规 store 导致永远读不到。
+      let stores = [null];
+      if (typeof chrome.cookies.getAllCookieStores === 'function') {
+        const listed = await chrome.cookies.getAllCookieStores().catch(() => null);
+        if (Array.isArray(listed) && listed.length) {
+          stores = listed;
+        }
+      }
+      for (const name of names) {
+        for (const url of urls) {
+          for (const store of stores) {
+            const details = { url, name };
+            const storeId = cleanString(store?.id);
+            if (storeId) {
+              details.storeId = storeId;
+            }
+            const cookie = await chrome.cookies.get(details).catch(() => null);
+            const value = cleanString(cookie?.value);
+            if (value) {
+              return value;
+            }
+          }
         }
       }
       return '';
@@ -399,14 +419,30 @@
         250,
         Number(options.intervalMs) || GROK_REGISTRATION_SUCCESS_POLL_INTERVAL_MS
       );
+      const tabId = Number.isInteger(Number(options.tabId)) ? Number(options.tabId) : null;
       const deadline = Date.now() + timeoutMs;
       let lastState = '';
       let lastError = '';
+      let tosGateDismissLogged = false;
 
       while (Date.now() <= deadline) {
         throwIfStopped();
         if (await readSsoCookieFromChrome()) {
           return { state: 'signed_in' };
+        }
+
+        // 注册提交后页面会跳转到 grok.com（可能先落在 tos_gate 条款页），
+        // 导航后原注入的驱动失效——每轮先确保驱动在新页面上重新就绪。
+        if (Number.isInteger(tabId)) {
+          try {
+            await ensureContentReady(tabId, {
+              timeoutMs: Math.min(DEFAULT_GROK_PAGE_TIMEOUT_MS, Math.max(5000, intervalMs + 3000)),
+              stableMs: 500,
+              initialDelayMs: 0,
+            });
+          } catch (error) {
+            lastError = getErrorMessage(error);
+          }
         }
 
         try {
@@ -418,6 +454,19 @@
           lastError = '';
           if (lastState === 'signed_in' || lastState === 'sso_cookie_found') {
             return pageState;
+          }
+          if (lastState === 'tos_gate') {
+            const dismissed = await sendGrokCommand('grok-dismiss-tos-gate', {}, {
+              step: options.step || 4,
+              timeoutMs: 15000,
+            }).catch((error) => {
+              lastError = getErrorMessage(error);
+              return null;
+            });
+            if (dismissed?.dismissed && !tosGateDismissLogged) {
+              tosGateDismissLogged = true;
+              await log('步骤 4：检测到 Grok 服务条款更新页，已自动点击确认，正在等待登录态落地...', 'info', options.nodeId || 'grok-submit-profile');
+            }
           }
         } catch (error) {
           lastError = getErrorMessage(error);
@@ -706,7 +755,7 @@
           nodeId
         );
         await log('步骤 4：人机验证已通过，正在确认 Grok 注册成功...', 'info', nodeId);
-        const registrationState = await waitForGrokRegistrationSuccess({ step: 4 });
+        const registrationState = await waitForGrokRegistrationSuccess({ step: 4, tabId, nodeId });
         await log('步骤 4：已完成 Grok 注册并确认登录状态。', 'ok', nodeId);
         await completeNode(nodeId, {
           grokFirstName: profile.firstName,

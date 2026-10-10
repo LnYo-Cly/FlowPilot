@@ -70,7 +70,7 @@ test('sidepanel saves, restores, and auto-saves isolated Grok SUB2API policy', (
   assert.match(source, /syncStepDefinitionsFromUiState\(\{[\s\S]*grokSub2apiGrok2ApiUploadEnabled: enabled/);
   assert.match(source, /function updateGrokSub2ApiGrok2ApiUploadUi\(/);
   assert.match(source, /normalizedTargetId === 'grok2api'[\s\S]*showGrok2ApiControls/);
-  assert.match(source, /rowGrok2ApiUrl, rowGrok2ApiKey/);
+  assert.match(source, /rowGrok2ApiUrl, rowGrok2ApiUser, rowGrok2ApiKey/);
   assert.match(source, /grok2api:\s*'https:\/\/github\.com\/jiujiu532\/grok2api'/);
 });
 

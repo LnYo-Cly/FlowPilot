@@ -1735,6 +1735,7 @@ return {
   assert.equal(api.scheduledCount(), 1);
   assert.equal(api.events.includes('operation:submit-signup-password:start'), false);
   assert.deepStrictEqual(api.events, [
+    'log:步骤 3：落地页检测 → 状态=password_page，URL=https://auth.openai.com/u/signup/password，强制密码=开',
     'operation:signup-password:start',
     'fill-password:Secret123!',
     'operation:signup-password:end',
@@ -1758,6 +1759,7 @@ return {
   api.releaseSubmitDelay();
   await flush;
   assert.deepStrictEqual(api.events, [
+    'log:步骤 3：落地页检测 → 状态=password_page，URL=https://auth.openai.com/u/signup/password，强制密码=开',
     'operation:signup-password:start',
     'fill-password:Secret123!',
     'operation:signup-password:end',

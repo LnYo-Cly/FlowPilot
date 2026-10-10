@@ -129,7 +129,8 @@ test('grok profile runner submits once and waits for registration success', asyn
   assert.equal(profileSubmitCall.options.timeoutMs, 330 * 1000);
   assert.equal(profileSubmitCall.options.responseTimeoutMs, api.GROK_PROFILE_SUBMIT_COMMAND_TIMEOUT_MS);
   assert.equal(cookieReadCount, 4);
-  assert.deepEqual(sleepCalls, [60 * 1000, api.GROK_REGISTRATION_SUCCESS_POLL_INTERVAL_MS]);
+  // sso×3 个域读取为空后，第 4 次读取（sso-rw 兜底）命中 → 首轮轮询即成功，无间隔 sleep。
+  assert.deepEqual(sleepCalls, [60 * 1000]);
   assert.equal(completedPayload.grokPageState, 'signed_in');
   assert.match(profileSubmitCall.options.logMessage, /等待人机验证成功/);
   const runnerSource = fs.readFileSync('flows/grok/background/register-runner.js', 'utf8');
@@ -364,6 +365,135 @@ test('grok SSO extraction stores only the current cookie without logging the sec
   assert.equal(getGrokRuntime(completedPayload).upload.targetUrl, '');
   assert.equal(markUsedPayload.grokSsoCookie, 'new-cookie');
   assert.equal(logs.some(({ message }) => message.includes('new-cookie')), false);
+});
+
+test('grok sso read scans every cookie store so incognito sso is found', async () => {
+  const api = loadGrokRunnerApi();
+  const getCalls = [];
+  let completedPayload = null;
+  let currentState = {
+    activeFlowId: 'grok',
+    grokRegisterTabId: 404,
+    runtimeState: {
+      flowState: {
+        grok: { session: { registerTabId: 404 } },
+      },
+    },
+  };
+  const runner = api.createGrokRegisterRunner({
+    addLog: async () => {},
+    chrome: {
+      cookies: {
+        getAllCookieStores: async () => [{ id: '0' }, { id: '1' }],
+        get: async (details) => {
+          getCalls.push(details);
+          // sso 只存在于无痕 store（id=1）
+          return details.storeId === '1' && details.name === 'sso'
+            ? { value: 'incognito-sso' }
+            : null;
+        },
+      },
+      tabs: {
+        get: async (tabId) => ({ id: tabId }),
+        update: async () => {},
+      },
+    },
+    completeNodeFromBackground: async (_nodeId, payload) => {
+      completedPayload = payload;
+    },
+    ensureContentScriptReadyOnTab: async () => {},
+    generatePassword: () => 'StrongPassword123!',
+    generateRandomName: () => ({ firstName: 'Alex', lastName: 'Morgan' }),
+    getState: async () => currentState,
+    getTabId: async () => 404,
+    isTabAlive: async () => true,
+    registerTab: async () => {},
+    sendToContentScript: async () => ({ submitted: true, state: 'profile_submitted' }),
+    sendToContentScriptResilient: async () => ({ state: 'tos_gate' }),
+    setPasswordState: async () => {},
+    setState: async (patch) => {
+      currentState = { ...currentState, ...patch };
+    },
+    sleepWithStop: async () => {},
+    waitForTabStableComplete: async () => {},
+  });
+
+  await runner.executeGrokSubmitProfile({ nodeId: 'grok-submit-profile', ...currentState });
+
+  assert.equal(completedPayload.grokPageState, 'signed_in');
+  assert.ok(getCalls.some((call) => call.storeId === '1'), 'expected a cookie read against the incognito store');
+  assert.ok(getCalls.every((call) => ['sso', 'sso-rw'].includes(call.name)));
+});
+
+test('grok registration wait auto-dismisses the tos gate page', async () => {
+  const api = loadGrokRunnerApi();
+  const sentCommands = [];
+  const logs = [];
+  let cookieReads = 0;
+  let completedPayload = null;
+  let currentState = {
+    activeFlowId: 'grok',
+    grokRegisterTabId: 505,
+    runtimeState: {
+      flowState: {
+        grok: { session: { registerTabId: 505 } },
+      },
+    },
+  };
+  const runner = api.createGrokRegisterRunner({
+    addLog: async (message, level) => {
+      logs.push({ message, level });
+    },
+    chrome: {
+      cookies: {
+        get: async () => {
+          cookieReads += 1;
+          // 前 6 次读取为空（第一轮 sso×3 + sso-rw×3），之后返回 sso
+          return cookieReads > 6 ? { value: 'late-sso' } : null;
+        },
+      },
+      tabs: {
+        get: async (tabId) => ({ id: tabId }),
+        update: async () => {},
+      },
+    },
+    completeNodeFromBackground: async (_nodeId, payload) => {
+      completedPayload = payload;
+    },
+    ensureContentScriptReadyOnTab: async () => {},
+    generatePassword: () => 'StrongPassword123!',
+    generateRandomName: () => ({ firstName: 'Alex', lastName: 'Morgan' }),
+    getState: async () => currentState,
+    getTabId: async () => 505,
+    isTabAlive: async () => true,
+    registerTab: async () => {},
+    sendToContentScript: async (_sourceId, message) => {
+      sentCommands.push(message.nodeId);
+      return { submitted: true, state: 'profile_submitted' };
+    },
+    sendToContentScriptResilient: async (_sourceId, message) => {
+      sentCommands.push(message.nodeId);
+      if (message.nodeId === 'GET_PAGE_STATE') {
+        return { state: 'tos_gate', url: 'https://grok.com/tos_gate' };
+      }
+      if (message.nodeId === 'grok-dismiss-tos-gate') {
+        return { dismissed: true, clicked: ['知道了'], state: 'unknown' };
+      }
+      return { state: 'unknown' };
+    },
+    setPasswordState: async () => {},
+    setState: async (patch) => {
+      currentState = { ...currentState, ...patch };
+    },
+    sleepWithStop: async () => {},
+    waitForTabStableComplete: async () => {},
+  });
+
+  await runner.executeGrokSubmitProfile({ nodeId: 'grok-submit-profile', ...currentState });
+
+  assert.ok(sentCommands.includes('grok-dismiss-tos-gate'));
+  assert.equal(completedPayload.grokPageState, 'signed_in');
+  assert.ok(logs.some(({ message }) => message.includes('服务条款更新页')));
 });
 
 test('grok register runner requires background node completion dependency', () => {

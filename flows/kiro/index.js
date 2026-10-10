@@ -39,6 +39,7 @@
     "targetSelectorLabel": "来源"
   },
   "baseGroups": [
+    "kiro-auth-method",
     "kiro-runtime-status",
     "shared-auto-run"
   ],
@@ -143,6 +144,31 @@
         }
       ]
     },
+    "kiro-github-signup": {
+      "flowId": "kiro",
+      "kind": "flow-page",
+      "label": "GitHub 注册页",
+      "readyPolicy": "top-frame-only",
+      "family": "kiro-github-signup-family",
+      "driverId": "flows/kiro/content/github-signup-page",
+      "cleanupScopes": [],
+      "detectionMatchers": [
+        {
+          "hostnames": [
+            "github.com",
+            "www.github.com"
+          ]
+        }
+      ],
+      "familyMatchers": [
+        {
+          "hostnames": [
+            "github.com",
+            "www.github.com"
+          ]
+        }
+      ]
+    },
     "kiro-rs-admin": {
       "flowId": "kiro",
       "kind": "virtual-page",
@@ -163,13 +189,39 @@
         "kiro-submit-name",
         "kiro-submit-verification-code",
         "kiro-submit-password",
-        "kiro-complete-register-consent"
+        "kiro-complete-register-consent",
+        "kiro-open-github-auth"
       ]
     },
     "flows/kiro/content/desktop-authorize-page": {
       "sourceId": "kiro-desktop-authorize",
       "commands": [
         "kiro-complete-desktop-authorize"
+      ]
+    },
+    "flows/kiro/content/github-signup-page": {
+      "sourceId": "kiro-github-signup",
+      "commands": [
+        "kiro-github-submit-email",
+        "kiro-github-submit-password",
+        "kiro-github-submit-username",
+        "kiro-github-submit-email-prefs",
+        "kiro-github-submit-launch-code",
+        "kiro-github-submit-device-code",
+        "kiro-github-complete-oauth"
+      ]
+    },
+    "flows/kiro/background/github-register-runner": {
+      "sourceId": "kiro-github-signup",
+      "commands": [
+        "kiro-github-open-signup",
+        "kiro-github-submit-email",
+        "kiro-github-submit-password",
+        "kiro-github-submit-username",
+        "kiro-github-submit-email-prefs",
+        "kiro-github-submit-launch-code",
+        "kiro-open-github-auth",
+        "kiro-github-complete-oauth"
       ]
     },
     "flows/kiro/background/register-runner": {
@@ -203,7 +255,17 @@
     "baseUrl": "",
     "apiKey": ""
   },
+  "settingsDefaults": {
+    "authMethod": "builder-id"
+  },
   "settingsGroups": {
+    "kiro-auth-method": {
+      "id": "kiro-auth-method",
+      "label": "Kiro 登录方式",
+      "rowIds": [
+        "row-kiro-auth-method"
+      ]
+    },
     "kiro-target-kiro-rs": {
       "id": "kiro-target-kiro-rs",
       "label": "kiro.rs 配置",
@@ -219,6 +281,8 @@
       "rowIds": [
         "row-kiro-web-status",
         "row-kiro-login-url",
+        "row-kiro-github-account",
+        "row-kiro-github-auth-status",
         "row-kiro-upload-status"
       ]
     }

@@ -79,6 +79,12 @@
       const password = state.customPassword || state.password || generatePassword();
       await setPasswordState(password);
 
+      const forcePasswordSignup = Boolean(
+        state?.forcePasswordSignup
+        ?? state?.settingsState?.flows?.openai?.signup?.forcePasswordSignup
+        ?? true
+      );
+
       const accounts = state.accounts || [];
       accounts.push({
         email: identity.email,
@@ -102,7 +108,7 @@
         ? `注册手机号为 ${identity.accountIdentifier}`
         : `邮箱为 ${identity.accountIdentifier}`;
       await addLog(
-        `步骤 3：正在填写密码，${identityLabel}，密码为${state.customPassword ? '自定义' : '自动生成'}（${password.length} 位）`
+        `步骤 3：正在填写密码，${identityLabel}，密码为${state.customPassword ? '自定义' : '自动生成'}（${password.length} 位），强制密码=${forcePasswordSignup ? '开' : '关'}`
       );
       await sendToContentScript('openai-auth', {
         type: 'EXECUTE_NODE',
@@ -115,6 +121,7 @@
           accountIdentifierType: identity.accountIdentifierType,
           accountIdentifier: identity.accountIdentifier,
           password,
+          forcePasswordSignup,
         },
       });
     }

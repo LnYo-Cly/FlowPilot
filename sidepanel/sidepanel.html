@@ -132,6 +132,19 @@
           <span class="setting-caption" id="account-delivery-mode-caption"></span>
         </div>
       </div>
+      <div class="data-row" id="row-force-password-signup" style="display:none;">
+        <span class="data-label">强制密码</span>
+        <div class="data-inline">
+          <label class="toggle-switch" for="input-force-password-signup"
+            title="开启后提交邮箱若直达验证码页，会自动点「使用密码继续」切回密码页再填密码；关闭则验证码直达时跳过密码">
+            <input type="checkbox" id="input-force-password-signup" checked />
+            <span class="toggle-switch-track" aria-hidden="true">
+              <span class="toggle-switch-thumb"></span>
+            </span>
+          </label>
+          <span class="data-value">验证码直达页自动切回密码注册</span>
+        </div>
+      </div>
         <div id="contribution-mode-panel" class="contribution-mode-panel" hidden>
           <div class="contribution-mode-panel-header">
             <span class="section-label">贡献模式</span>
@@ -346,6 +359,21 @@
         <span class="data-label">上传状态</span>
         <span id="display-openai-chatgpt2api-upload-status" class="data-value mono truncate">未开始</span>
       </div>
+      <div class="data-row" id="row-kiro-auth-method" style="display:none;">
+        <span class="data-label">登录方式</span>
+        <select id="select-kiro-auth-method" class="data-input">
+          <option value="builder-id">Builder ID</option>
+          <option value="github">GitHub</option>
+        </select>
+      </div>
+      <div class="data-row" id="row-kiro-github-account" style="display:none;">
+        <span class="data-label">GitHub 账号</span>
+        <span id="display-kiro-github-account" class="data-value mono truncate">未注册</span>
+      </div>
+      <div class="data-row" id="row-kiro-github-auth-status" style="display:none;">
+        <span class="data-label">GitHub 授权</span>
+        <span id="display-kiro-github-auth-status" class="data-value mono truncate">未开始</span>
+      </div>
       <div class="data-row" id="row-kiro-rs-url" style="display:none;">
         <span class="data-label">kiro.rs</span>
         <input type="text" id="input-kiro-rs-url" class="data-input"
@@ -429,15 +457,20 @@
         <input type="text" id="input-grok2api-url" class="data-input"
           placeholder="请输入 grok2api 地址，例如 http://localhost:8000" />
       </div>
+      <div class="data-row" id="row-grok2api-user" style="display:none;">
+        <span class="data-label">管理员账号</span>
+        <input type="text" id="input-grok2api-user" class="data-input"
+          placeholder="请输入 grok2api 管理员账号，默认 admin" />
+      </div>
       <div class="data-row" id="row-grok2api-key" style="display:none;">
-        <span class="data-label">Admin Key</span>
+        <span class="data-label">管理员密码</span>
         <div class="input-with-icon">
           <input type="password" id="input-grok2api-key" class="data-input data-input-with-icon"
-            placeholder="请输入 grok2api Admin Key" />
+            placeholder="请输入 grok2api 管理员密码" />
           <button id="btn-toggle-grok2api-key" class="input-icon-btn" type="button"
-            data-password-toggle="input-grok2api-key" data-show-label="显示 grok2api Admin Key"
-            data-hide-label="隐藏 grok2api Admin Key" aria-label="显示 grok2api Admin Key"
-            title="显示 grok2api Admin Key"></button>
+            data-password-toggle="input-grok2api-key" data-show-label="显示 grok2api 管理员密码"
+            data-hide-label="隐藏 grok2api 管理员密码" aria-label="显示 grok2api 管理员密码"
+            title="显示 grok2api 管理员密码"></button>
         </div>
       </div>
       <div class="data-row" id="row-grok-register-status" style="display:none;">

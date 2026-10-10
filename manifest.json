@@ -43,6 +43,26 @@
   "content_scripts": [
     {
       "matches": [
+        "https://accounts.x.ai/oauth2/*",
+        "https://auth.x.ai/oauth2/*"
+      ],
+      "js": [
+        "content/activation-utils.js",
+        "flows/openai/index.js",
+        "flows/kiro/index.js",
+        "flows/grok/index.js",
+        "flows/cline/index.js",
+        "flows/index.js",
+        "core/flow-kernel/flow-registry.js",
+        "core/flow-kernel/source-registry.js",
+        "content/utils.js",
+        "content/operation-delay.js",
+        "flows/grok/content/sub2api-oauth-page.js"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
         "https://auth0.openai.com/*",
         "https://auth.openai.com/*",
         "https://accounts.openai.com/*"

@@ -22,12 +22,17 @@ function createReaderHarness(api, options = {}) {
   const getTabIdCalls = [];
   const queryCalls = [];
   const registerCalls = [];
+  const reloadCalls = [];
   const sentMessages = [];
   const sleepCalls = [];
+  const logCalls = [];
   let sendCount = 0;
   let currentTab = sessionTab;
 
   const reader = api.createOpenAiSessionReader({
+    addLog: async (message, level = 'info') => {
+      logCalls.push({ message, level });
+    },
     chrome: {
       tabs: {
         get: async (tabId) => {
@@ -44,6 +49,12 @@ function createReaderHarness(api, options = {}) {
           return currentTab ? [{ ...currentTab }] : [];
         },
         update: async () => {},
+        reload: async (tabId) => {
+          reloadCalls.push(tabId);
+          if (typeof options.onReload === 'function') {
+            await options.onReload(tabId);
+          }
+        },
       },
     },
     ensureContentScriptReadyOnTabUntilStopped: async (source, tabId, injectOptions = {}) => {
@@ -90,9 +101,11 @@ function createReaderHarness(api, options = {}) {
   return {
     ensureCalls,
     getTabIdCalls,
+    logCalls,
     queryCalls,
     reader,
     registerCalls,
+    reloadCalls,
     sentMessages,
     sleepCalls,
   };
@@ -272,6 +285,59 @@ test('OpenAI session reader retries only missing required fields up to eleven re
   assert.equal(harness.sentMessages.length, 11);
   assert.deepEqual(harness.sleepCalls, [1000, ...Array(10).fill(2000)]);
   assert.equal(harness.ensureCalls.length, 1);
+});
+
+test('OpenAI session reader reloads the tab once on HTTP 403 then retries', async () => {
+  const api = loadSessionReaderApi();
+  const harness = createReaderHarness(api, {
+    registeredTabId: 77,
+    registeredTabAlive: true,
+    sendResult(attempt) {
+      if (attempt === 1) {
+        return { ok: false, error: '读取 ChatGPT 会话失败：HTTP 403', status: 403 };
+      }
+      return {
+        ok: true,
+        session: { user: { email: 'flow@example.com' } },
+        accessToken: 'session-access-token',
+      };
+    },
+  });
+
+  const result = await harness.reader.readCurrentSessionFromState({}, {
+    visibleStep: 7,
+    targetLabel: 'ChatGPT2API',
+    requiredFields: ['session'],
+  });
+
+  assert.equal(result.session.user.email, 'flow@example.com');
+  assert.deepEqual(harness.reloadCalls, [77]);
+  assert.equal(harness.sentMessages.length, 2);
+  assert.equal(harness.ensureCalls.length, 2);
+  assert.ok(
+    harness.logCalls.some(({ message }) => /403/.test(message) && /刷新/.test(message)),
+    'expected a log line describing the 403 reload',
+  );
+});
+
+test('OpenAI session reader does not reload twice for persistent 403', async () => {
+  const api = loadSessionReaderApi();
+  const harness = createReaderHarness(api, {
+    registeredTabId: 77,
+    registeredTabAlive: true,
+    sendResult: { ok: false, error: '读取 ChatGPT 会话失败：HTTP 403', status: 403 },
+  });
+
+  await assert.rejects(
+    () => harness.reader.readCurrentSessionFromState({}, {
+      visibleStep: 7,
+      requiredFields: ['session'],
+    }),
+    /HTTP 403/
+  );
+
+  assert.deepEqual(harness.reloadCalls, [77]);
+  assert.equal(harness.sentMessages.length, 2);
 });
 
 test('OpenAI session reader does not retry protocol errors', async () => {

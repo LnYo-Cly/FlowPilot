@@ -113,6 +113,31 @@
         hasAccessToken: false,
         hasSessionToken: false,
       },
+      github: {
+        email: '',
+        username: '',
+        password: '',
+        status: '',
+        tabId: null,
+        launchCodeRequestedAt: 0,
+        completedAt: 0,
+      },
+      githubAuth: {
+        region: DEFAULT_REGION,
+        state: '',
+        codeVerifier: '',
+        codeChallenge: '',
+        redirectUri: '',
+        redirectPort: 0,
+        portalUrl: '',
+        authorizationCode: '',
+        accessToken: '',
+        refreshToken: '',
+        expiresAt: '',
+        profileArn: '',
+        status: '',
+        authorizedAt: 0,
+      },
       desktopAuth: {
         region: DEFAULT_REGION,
         clientId: '',
@@ -169,6 +194,31 @@
         completedAt: Math.max(0, normalizeInteger(merged.webAuth?.completedAt)),
         hasAccessToken: normalizeBoolean(merged.webAuth?.hasAccessToken),
         hasSessionToken: normalizeBoolean(merged.webAuth?.hasSessionToken),
+      },
+      github: {
+        email: normalizeString(merged.github?.email),
+        username: normalizeString(merged.github?.username),
+        password: normalizeString(merged.github?.password),
+        status: normalizeString(merged.github?.status),
+        tabId: normalizeNullableInteger(merged.github?.tabId),
+        launchCodeRequestedAt: Math.max(0, normalizeInteger(merged.github?.launchCodeRequestedAt)),
+        completedAt: Math.max(0, normalizeInteger(merged.github?.completedAt)),
+      },
+      githubAuth: {
+        region: normalizeString(merged.githubAuth?.region, DEFAULT_REGION),
+        state: normalizeString(merged.githubAuth?.state),
+        codeVerifier: normalizeString(merged.githubAuth?.codeVerifier),
+        codeChallenge: normalizeString(merged.githubAuth?.codeChallenge),
+        redirectUri: normalizeString(merged.githubAuth?.redirectUri),
+        redirectPort: Math.max(0, normalizeInteger(merged.githubAuth?.redirectPort)),
+        portalUrl: normalizeString(merged.githubAuth?.portalUrl),
+        authorizationCode: normalizeString(merged.githubAuth?.authorizationCode),
+        accessToken: normalizeString(merged.githubAuth?.accessToken),
+        refreshToken: normalizeString(merged.githubAuth?.refreshToken),
+        expiresAt: normalizeString(merged.githubAuth?.expiresAt),
+        profileArn: normalizeString(merged.githubAuth?.profileArn),
+        status: normalizeString(merged.githubAuth?.status),
+        authorizedAt: Math.max(0, normalizeInteger(merged.githubAuth?.authorizedAt)),
       },
       desktopAuth: {
         region: normalizeString(merged.desktopAuth?.region, DEFAULT_REGION),
@@ -425,6 +475,57 @@
     };
   }
 
+  function buildGithubResetPatch(currentState = {}) {
+    const currentRuntimeState = ensureRuntimeState(currentState);
+    const nextRuntimeState = normalizeRuntimeState({
+      ...currentRuntimeState,
+      session: {
+        ...currentRuntimeState.session,
+        currentStage: 'github-signup',
+        pageState: '',
+        pageUrl: '',
+        lastError: '',
+        lastWarning: '',
+      },
+      github: {
+        ...currentRuntimeState.github,
+        status: '',
+        completedAt: 0,
+      },
+      githubAuth: buildDefaultRuntimeState().githubAuth,
+      upload: {
+        ...buildDefaultRuntimeState().upload,
+        targetId: currentRuntimeState.upload?.targetId || DEFAULT_TARGET_ID,
+      },
+    });
+    return {
+      runtimeState: buildCanonicalRuntimeStatePatch(currentState, nextRuntimeState),
+    };
+  }
+
+  function buildGithubAuthResetPatch(currentState = {}) {
+    const currentRuntimeState = ensureRuntimeState(currentState);
+    const nextRuntimeState = normalizeRuntimeState({
+      ...currentRuntimeState,
+      session: {
+        ...currentRuntimeState.session,
+        currentStage: 'github-auth',
+        pageState: '',
+        pageUrl: '',
+        lastError: '',
+        lastWarning: '',
+      },
+      githubAuth: buildDefaultRuntimeState().githubAuth,
+      upload: {
+        ...buildDefaultRuntimeState().upload,
+        targetId: currentRuntimeState.upload?.targetId || DEFAULT_TARGET_ID,
+      },
+    });
+    return {
+      runtimeState: buildCanonicalRuntimeStatePatch(currentState, nextRuntimeState),
+    };
+  }
+
   function buildDownstreamResetPatch(stepKey = '', currentState = {}) {
     switch (normalizeString(stepKey)) {
       case 'kiro-open-register-page':
@@ -450,6 +551,17 @@
         return buildDesktopResetPatch(currentState);
       case 'kiro-complete-desktop-authorize':
         return buildUploadResetPatch(currentState);
+      case 'kiro-github-open-signup':
+        return buildStartRegisterResetPatch(currentState);
+      case 'kiro-github-submit-email':
+      case 'kiro-github-submit-password':
+      case 'kiro-github-submit-username':
+      case 'kiro-github-submit-email-prefs':
+      case 'kiro-github-submit-launch-code':
+        return buildGithubResetPatch(currentState);
+      case 'kiro-open-github-auth':
+      case 'kiro-github-complete-oauth':
+        return buildGithubAuthResetPatch(currentState);
       case 'kiro-upload-credential':
         return buildUploadResetPatch(currentState);
       default:
