@@ -52,6 +52,7 @@ function extractFunction(name) {
 
 const bundle = [
   extractFunction('throwIfStopped'),
+  extractFunction('dispatchHumanClickWithDebugger'),
   extractFunction('clickWithDebugger'),
 ].join('\n');
 

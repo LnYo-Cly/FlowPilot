@@ -5,6 +5,22 @@
   const DEFAULT_REGION = kiroStateApi?.DEFAULT_REGION || 'us-east-1';
   const DEFAULT_TARGET_ID = kiroStateApi?.DEFAULT_TARGET_ID || 'kiro-rs';
   const BUILDER_ID_PROFILE_ARN = 'arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX';
+  const SOCIAL_PROFILE_ARN = 'arn:aws:codewhisperer:us-east-1:699475941385:profile/EHGA3GRVQMUK';
+
+  function isGithubAuthFlow(state = {}) {
+    const runtimeState = readKiroRuntime(state);
+    const authMethod = cleanString(
+      state?.kiroAuthMethod
+      || state?.settingsState?.flows?.kiro?.authMethod
+      || ''
+    ).toLowerCase();
+    if (authMethod === 'github') {
+      return true;
+    }
+    // 兼容旧状态：如果 githubAuth 分支已产出 refreshToken 且 desktopAuth 没有，按 social 处理
+    return Boolean(cleanString(runtimeState.githubAuth?.refreshToken))
+      && !cleanString(runtimeState.desktopAuth?.refreshToken);
+  }
 
   function isPlainObject(value) {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -201,6 +217,46 @@
   function buildUploadPayload(state = {}) {
     const runtimeState = readKiroRuntime(state);
     const targetId = resolveKiroTargetId(state);
+
+    if (isGithubAuthFlow(state)) {
+      const githubAuth = runtimeState.githubAuth || {};
+      const github = runtimeState.github || {};
+      const refreshToken = cleanString(githubAuth.refreshToken);
+      const region = normalizeRegion(
+        githubAuth.region
+        || state?.settingsState?.flows?.kiro?.targets?.[targetId]?.region
+        || DEFAULT_REGION
+      );
+      const email = cleanString(github.email || runtimeState.register?.email || state?.email);
+      if (!refreshToken) {
+        throw new Error('缺少 GitHub 授权 refreshToken，请先完成 GitHub 授权步骤。');
+      }
+      if (!email) {
+        throw new Error('缺少注册邮箱，无法上传到 kiro.rs。');
+      }
+      return {
+        targetId,
+        region,
+        email,
+        refreshToken,
+        accessToken: cleanString(githubAuth.accessToken) || undefined,
+        expiresAt: cleanString(githubAuth.expiresAt) || undefined,
+        profileArn: cleanString(githubAuth.profileArn) || SOCIAL_PROFILE_ARN,
+        authMethod: 'social',
+        provider: 'Github',
+        authRegion: region,
+        apiRegion: region,
+        sourceChannel: 'github-signup',
+        metadata: {
+          ...(cleanString(github.username) ? { githubUsername: cleanString(github.username) } : {}),
+          ...(cleanString(github.login) && cleanString(github.login) !== cleanString(github.username)
+            ? { githubLogin: cleanString(github.login) }
+            : {}),
+        },
+        ...buildProxyPayload(state),
+      };
+    }
+
     const desktopAuth = runtimeState.desktopAuth || {};
     const register = runtimeState.register || {};
     const refreshToken = String(desktopAuth.refreshToken || '');

@@ -154,6 +154,7 @@
 
   function createOpenAiSessionReader(deps = {}) {
     const {
+      addLog = null,
       chrome,
       ensureContentScriptReadyOnTabUntilStopped,
       getTabId,
@@ -265,6 +266,7 @@
       });
 
       let missingFields = requiredFields;
+      let reloadedAfterForbidden = false;
       for (let attempt = 1; attempt <= SESSION_READ_MAX_ATTEMPTS; attempt += 1) {
         await getResolvedSessionTab(tabId, visibleStep, targetLabel, automationWindowId);
         const rawResult = await sendTabMessageUntilStopped(
@@ -272,6 +274,27 @@
           OPENAI_SESSION_SOURCE,
           OPENAI_SESSION_MESSAGE
         );
+        if (
+          rawResult?.ok !== true
+          && Number(rawResult?.status) === 403
+          && !reloadedAfterForbidden
+          && typeof chrome?.tabs?.reload === 'function'
+        ) {
+          reloadedAfterForbidden = true;
+          await addLog?.(
+            `步骤 ${visibleStep}：ChatGPT 会话接口返回 403，刷新 chatgpt.com 标签页后重试...`,
+            'info',
+            { step: visibleStep }
+          );
+          await chrome.tabs.reload(tabId).catch(() => {});
+          await waitForTabCompleteUntilStopped(tabId);
+          await ensureContentScriptReadyOnTabUntilStopped(OPENAI_SESSION_SOURCE, tabId, {
+            inject: OPENAI_SESSION_INJECT_FILES,
+            injectSource: OPENAI_SESSION_SOURCE,
+            logMessage: `步骤 ${visibleStep}：chatgpt.com 刷新完成，重新加载会话读取驱动...`,
+          });
+          continue;
+        }
         const sessionState = normalizeSessionResult(rawResult, visibleStep);
         missingFields = getMissingRequiredFields(sessionState, requiredFields);
         if (!missingFields.length) {

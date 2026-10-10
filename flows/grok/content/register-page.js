@@ -136,13 +136,84 @@ function findGrokSubmitButton(contextPattern = GROK_CONTINUE_TEXT_PATTERN) {
     || null;
 }
 
-function getGrokTurnstileResponseValue() {
-  const fields = Array.from(document.querySelectorAll([
+// 深度查询：x.ai 页面用 Web Components，Turnstile 组件/隐藏 input 可能挂在
+// open shadow root 或同域 iframe 里，普通 querySelectorAll 完全看不到。
+function queryGrokDeep(selector, rootNode) {
+  const results = [];
+  const visited = new Set();
+  const visit = (scope) => {
+    if (!scope || visited.has(scope) || typeof scope.querySelectorAll !== 'function') return;
+    visited.add(scope);
+    let descendants = [];
+    try {
+      descendants = Array.from(scope.querySelectorAll('*'));
+    } catch (_error) {}
+    for (const el of descendants) {
+      try {
+        if (typeof el.matches === 'function' && el.matches(selector) && !results.includes(el)) {
+          results.push(el);
+        }
+      } catch (_error) {}
+      if (el.shadowRoot) visit(el.shadowRoot);
+      if (el.tagName === 'IFRAME') {
+        try {
+          visit(el.contentDocument);
+        } catch (_error) {}
+      }
+    }
+  };
+  visit(rootNode || document);
+  return results;
+}
+
+function getGrokTurnstileInputElement() {
+  return queryGrokDeep([
     'input[name="cf-turnstile-response"]',
     'textarea[name="cf-turnstile-response"]',
-  ].join(', ')));
-  const field = fields.find((element) => String(element.value || '').trim());
-  return String(field?.value || '').trim();
+  ].join(', '))[0] || null;
+}
+
+function getGrokTurnstileApiToken() {
+  try {
+    if (typeof window !== 'undefined'
+      && window.turnstile
+      && typeof window.turnstile.getResponse === 'function') {
+      return String(window.turnstile.getResponse() || '').trim();
+    }
+  } catch (_error) {}
+  return '';
+}
+
+function getGrokTurnstileResponseValue() {
+  const field = getGrokTurnstileInputElement();
+  const value = String(field?.value || '').trim();
+  if (value) return value;
+  return getGrokTurnstileApiToken();
+}
+
+function backfillGrokTurnstileToken() {
+  const input = getGrokTurnstileInputElement();
+  if (!input) return '';
+  const existing = String(input.value || '').trim();
+  if (existing.length >= 80) return existing;
+  const token = getGrokTurnstileApiToken();
+  if (token.length < 80) return existing;
+  const inputCtor = input.tagName === 'TEXTAREA'
+    ? (typeof window !== 'undefined' ? window.HTMLTextAreaElement : undefined)
+    : (typeof window !== 'undefined' ? window.HTMLInputElement : undefined);
+  const setter = Object.getOwnPropertyDescriptor(inputCtor?.prototype || {}, 'value')?.set;
+  try {
+    if (setter) {
+      setter.call(input, token);
+    } else {
+      input.value = token;
+    }
+    if (typeof Event === 'function') {
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  } catch (_error) {}
+  return String(input.value || '').trim();
 }
 
 function getGrokHumanVerificationContainers() {
@@ -159,7 +230,7 @@ function getGrokHumanVerificationContainers() {
     'textarea[name="cf-turnstile-response"]',
   ].join(', ');
   const containers = new Set();
-  for (const element of Array.from(document.querySelectorAll(selectors))) {
+  for (const element of queryGrokDeep(selectors)) {
     let current = element;
     for (let depth = 0; current && depth < 5; depth += 1) {
       if (current instanceof Element) containers.add(current);
@@ -185,9 +256,109 @@ function getGrokHumanVerificationSuccessEvidence() {
   return null;
 }
 
+const GROK_TURNSTILE_CLICK_TARGET_SELECTOR = [
+  'iframe[src*="challenges.cloudflare.com"]',
+  'iframe[src*="turnstile"]',
+  'iframe[title*="cloudflare" i]',
+  '.cf-turnstile',
+  '[data-sitekey]',
+].join(', ');
+const GROK_TURNSTILE_CLICK_COOLDOWN_MS = 8000;
+const GROK_TURNSTILE_MAX_AUTO_CLICKS = 5;
+let grokTurnstileAutoClickCount = 0;
+let grokTurnstileLastClickAt = 0;
+let grokTurnstileManualHintLogged = false;
+
+function getGrokTurnstileClickPoint() {
+  const elements = queryGrokDeep(GROK_TURNSTILE_CLICK_TARGET_SELECTOR)
+    .filter(isVisibleGrokElement);
+  if (!elements.length) return null;
+  // 优先打 iframe（勾选框在 iframe 内部左侧），容器类兜底同样取左缘。
+  const element = elements.find((candidate) => candidate.tagName === 'IFRAME') || elements[0];
+  // 组件可能在视口外：CDP 用的是视口坐标，先滚动到可见再量取，否则点击会落在屏幕外。
+  try {
+    element.scrollIntoView?.({ block: 'center', inline: 'center' });
+  } catch (_error) {}
+  const rect = element.getBoundingClientRect();
+  if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+  // Turnstile 的勾选框在组件左侧约 24px 处。
+  const offsetX = Math.min(24, Math.max(10, rect.width * 0.08));
+  const centerX = Math.round(rect.left + offsetX);
+  const centerY = Math.round(rect.top + rect.height / 2);
+  if (!Number.isFinite(centerX) || !Number.isFinite(centerY) || centerX < 0 || centerY < 0) return null;
+  return { centerX, centerY };
+}
+
+// 页面本地找不到组件（closed shadow root / 嵌套 iframe）时仍可能正处在人机验证页：
+// 用「验证迹象」决定是否发探测请求，坐标交给后台 CDP DOM 穿透定位。
+function hasGrokHumanVerificationHint() {
+  if (getGrokTurnstileClickPoint()) return true;
+  if (getGrokHumanVerificationContainers().length) return true;
+  const text = getGrokElementText(typeof document !== 'undefined' ? document.body : null) || '';
+  return /真人|验证您是|verify you are human|human verification|checking your|just a moment|cloudflare|验证码/i.test(text);
+}
+
+async function requestGrokTurnstileTrustedClick() {
+  if (getGrokHumanVerificationSuccessEvidence()) return { ok: true, skipped: true };
+  const point = getGrokTurnstileClickPoint();
+  if (!point && !hasGrokHumanVerificationHint()) return { ok: false, reason: 'not-found' };
+  if (Date.now() - grokTurnstileLastClickAt < GROK_TURNSTILE_CLICK_COOLDOWN_MS) {
+    return { ok: false, reason: 'cooldown' };
+  }
+  if (grokTurnstileAutoClickCount >= GROK_TURNSTILE_MAX_AUTO_CLICKS) {
+    if (!grokTurnstileManualHintLogged && typeof log === 'function') {
+      grokTurnstileManualHintLogged = true;
+      log('Cloudflare 自动验证已达重试上限，请在自动化窗口中手动勾选「请验证您是真人」。', 'warn');
+    }
+    return { ok: false, reason: 'max-attempts' };
+  }
+  grokTurnstileLastClickAt = Date.now();
+  grokTurnstileAutoClickCount += 1;
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'GROK_TURNSTILE_CLICK_REQUEST',
+      source: 'grok-register-page',
+      payload: point || { probe: true },
+    });
+    if (!response?.ok && typeof log === 'function') {
+      log(`Cloudflare 可信点击未成功（第 ${grokTurnstileAutoClickCount}/${GROK_TURNSTILE_MAX_AUTO_CLICKS} 次）：${String(response?.error || '未知响应')}。`, 'warn');
+    }
+    return response || { ok: false, error: 'empty-response' };
+  } catch (error) {
+    if (typeof log === 'function') {
+      log(`Cloudflare 可信点击请求失败：${String(error?.message || error)}。`, 'warn');
+    }
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
 async function waitForGrokHumanVerificationSuccess() {
+  let widgetDetected = hasGrokHumanVerificationHint();
+  if (widgetDetected) {
+    if (typeof log === 'function') {
+      log('检测到 Cloudflare 人机验证迹象，尝试通过调试器自动勾选真人验证...', 'info');
+    }
+    await requestGrokTurnstileTrustedClick().catch(() => {});
+  }
   const result = await waitForGrok(
-    getGrokHumanVerificationSuccessEvidence,
+    () => {
+      backfillGrokTurnstileToken();
+      const evidence = getGrokHumanVerificationSuccessEvidence();
+      if (evidence) return evidence;
+      if (!widgetDetected && hasGrokHumanVerificationHint()) {
+        widgetDetected = true;
+        if (typeof log === 'function') {
+          log('检测到 Cloudflare 人机验证迹象，尝试通过调试器自动勾选真人验证...', 'info');
+        }
+      }
+      if (
+        grokTurnstileAutoClickCount < GROK_TURNSTILE_MAX_AUTO_CLICKS
+        && Date.now() - grokTurnstileLastClickAt >= GROK_TURNSTILE_CLICK_COOLDOWN_MS
+      ) {
+        void requestGrokTurnstileTrustedClick();
+      }
+      return null;
+    },
     {
       timeoutMs: GROK_HUMAN_VERIFICATION_SUCCESS_TIMEOUT_MS,
       intervalMs: 500,
@@ -197,13 +368,73 @@ async function waitForGrokHumanVerificationSuccess() {
   throw new Error('x.ai 人机验证等待已达到 5 分钟，仍未显示成功，暂不点击完成注册。');
 }
 
+const GROK_TOS_GATE_PATH_PATTERN = /tos[_-]?gate|\/terms|\/legal/i;
+const GROK_TOS_GATE_TEXT_PATTERN = /服务条款|可接受使用政策|条款.*更新|terms\s+of\s+service|acceptable\s+use\s+policy|terms.{0,20}updat/i;
+const GROK_TOS_GATE_CONFIRM_PATTERN = /^\s*(?:知道了|好的|确定|确认|同意|接受|明白|got\s*it|okay?|understood|i\s*understand|agree|accept|continue|继续)\s*[。.!！]?$/i;
+const GROK_COOKIE_ACCEPT_PATTERN = /接受所有\s*cookie|接受全部|全部接受|accept\s*all\s*cookies?|allow\s*all\s*cookies?/i;
+
+function isGrokTosGatePage(pageText = '') {
+  // 排除仍在表单阶段的页面（注册页本身也带 Terms of Service 文案和「继续」按钮）。
+  const hasForm = Boolean(findGrokProfileInput(['givenName', 'firstName']))
+    || findGrokOtpInputs().length > 0
+    || Boolean(findGrokEmailInput());
+  if (hasForm) return false;
+  if (GROK_TOS_GATE_PATH_PATTERN.test(String(location.pathname || ''))) return true;
+  if (/accounts\.x\.ai$/i.test(String(location.hostname || ''))) return false;
+  const text = String(pageText || document.body?.innerText || '');
+  // 必须同时具备条款文案和一个明确确认按钮，避免正常 Grok 页的 Cookie 横幅误判。
+  return GROK_TOS_GATE_TEXT_PATTERN.test(text) && Boolean(findGrokClickableByText(GROK_TOS_GATE_CONFIRM_PATTERN));
+}
+
+async function dismissGrokTosGate() {
+  const clicked = [];
+  const confirmButton = findGrokClickableByText(GROK_TOS_GATE_CONFIRM_PATTERN);
+  if (confirmButton) {
+    clicked.push(getGrokElementText(confirmButton) || '知道了');
+    simulateGrokClick(confirmButton);
+    await sleep(400);
+  }
+  const cookieButton = findGrokClickableByText(GROK_COOKIE_ACCEPT_PATTERN);
+  if (cookieButton) {
+    clicked.push(getGrokElementText(cookieButton) || '接受所有 Cookie');
+    simulateGrokClick(cookieButton);
+    await sleep(300);
+  }
+  return {
+    submitted: true,
+    dismissed: clicked.length > 0,
+    clicked,
+    state: getGrokPageState(),
+    url: location.href,
+  };
+}
+
 function getGrokPageState() {
   const pageText = document.body?.innerText || '';
-  if (/grok|xai|x\.ai/i.test(location.hostname) && /(?:^|;\s*)sso=/.test(document.cookie || '')) return 'signed_in';
-  if (findGrokProfileInput(['givenName', 'firstName']) || findGrokPasswordInputs().length || GROK_PROFILE_TEXT_PATTERN.test(pageText)) return 'profile_entry';
-  if (findGrokOtpInputs().length) return 'verification_code_entry';
-  if (findGrokEmailInput()) return 'email_entry';
-  return 'unknown';
+  let state = 'unknown';
+  if (/grok|xai|x\.ai/i.test(location.hostname) && /(?:^|;\s*)sso=/.test(document.cookie || '')) {
+    state = 'signed_in';
+  } else if (isGrokTosGatePage(pageText)) {
+    state = 'tos_gate';
+  } else if (findGrokProfileInput(['givenName', 'firstName']) || findGrokPasswordInputs().length || GROK_PROFILE_TEXT_PATTERN.test(pageText)) {
+    state = 'profile_entry';
+  } else if (findGrokOtpInputs().length) {
+    state = 'verification_code_entry';
+  } else if (findGrokEmailInput()) {
+    state = 'email_entry';
+  }
+  // CF 兜底：后台每次轮询页面状态时顺带做一次自节流自动点击（内部有成功证据门禁+
+  // 冷却+次数上限）。只认结构性迹象（iframe/容器，含 shadow 穿透），unknown 态下才
+  // 放宽到文案迹象——避免验证码输入页因「验证码」文案误触发调试器探针。这覆盖了
+  // 「完成注册」点击之后才弹出人机验证的等待窗口。
+  if (hasGrokTurnstileStructuralHint() || (state === 'unknown' && hasGrokHumanVerificationHint())) {
+    void requestGrokTurnstileTrustedClick().catch(() => {});
+  }
+  return state;
+}
+
+function hasGrokTurnstileStructuralHint() {
+  return Boolean(getGrokTurnstileClickPoint()) || getGrokHumanVerificationContainers().length > 0;
 }
 
 async function openGrokSignupPage() {
@@ -375,6 +606,8 @@ async function executeGrokCommand(command, payload = {}) {
       return submitGrokProfile(payload);
     case 'grok-extract-sso-cookie':
       return extractGrokSsoCookie(payload);
+    case 'grok-dismiss-tos-gate':
+      return dismissGrokTosGate(payload);
     case 'GET_PAGE_STATE':
       return { state: getGrokPageState(), url: location.href };
     default:

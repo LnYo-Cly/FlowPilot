@@ -50,9 +50,11 @@ importScripts(
   'flows/grok/background/register-runner.js',
   'flows/kiro/background/desktop-client.js',
   'flows/kiro/background/desktop-authorize-runner.js',
+  'flows/kiro/background/github-register-runner.js',
   'flows/kiro/background/publisher-kiro-rs.js',
   'flows/grok/background/publisher-webchat2api.js',
   'flows/grok/background/publisher-grok2api.js',
+  'flows/grok/background/sso-device-flow.js',
   'flows/grok/background/sub2api-oauth-runner.js',
   'flows/cline/background/cline-client.js',
   'flows/cline/background/register-runner.js',
@@ -836,6 +838,9 @@ function getStepDefinitionsForState(state = {}) {
       signupMethod: getSignupMethodForStepDefinitions(resolvedState),
       phoneSignupReloginAfterBindEmailEnabled: Boolean(resolvedState?.phoneSignupReloginAfterBindEmailEnabled),
       grokSub2apiGrok2ApiUploadEnabled: Boolean(resolvedState?.grokSub2apiGrok2ApiUploadEnabled),
+      ...(resolvedState?.kiroAuthMethod ? { kiroAuthMethod: resolvedState.kiroAuthMethod } : {}),
+      ...(typeof resolvedState?.forcePasswordSignup === 'boolean' ? { forcePasswordSignup: resolvedState.forcePasswordSignup } : {}),
+      ...(resolvedState?.settingsState ? { settingsState: resolvedState.settingsState } : {}),
     });
     if (Array.isArray(definitions)) {
       return definitions;
@@ -1075,9 +1080,12 @@ const PERSISTED_SETTING_DEFAULTS = {
   activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
   kiroRsUrl: String(self.MultiPageFlowRegistry?.DEFAULT_KIRO_RS_URL || '').trim(),
   kiroRsKey: '',
+  kiroAuthMethod: 'builder-id',
   grokWebchat2ApiUrl: '',
   grokWebchat2ApiAdminKey: '',
   grok2ApiUrl: '',
+  grok2ApiUsername: 'admin',
+  grok2ApiPassword: '',
   grok2ApiAdminKey: '',
   cline2apiBaseUrl: '',
   cline2apiAdminToken: '',
@@ -1148,6 +1156,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   step6CookieCleanupEnabled: false,
   stepExecutionRangeByFlow: {},
   phoneSignupReloginAfterBindEmailEnabled: false,
+  forcePasswordSignup: true,
   phoneSmsReuseEnabled: DEFAULT_HERO_SMS_REUSE_ENABLED,
   freePhoneReuseEnabled: true,
   freePhoneReuseAutoEnabled: true,
@@ -1285,6 +1294,8 @@ const SETTINGS_SCHEMA_VIEW_KEYS = Object.freeze([
   'grokSub2apiAccountPriority',
   'grokSub2apiDefaultProxyName',
   'grok2ApiUrl',
+  'grok2ApiUsername',
+  'grok2ApiPassword',
   'grok2ApiAdminKey',
   'grokSub2apiGrok2ApiUploadEnabled',
   'codex2apiUrl',
@@ -1292,6 +1303,7 @@ const SETTINGS_SCHEMA_VIEW_KEYS = Object.freeze([
   'customPassword',
   'signupMethod',
   'phoneSignupReloginAfterBindEmailEnabled',
+  'forcePasswordSignup',
   'plusModeEnabled',
   'plusPaymentMethod',
   'accountDeliveryMode',
@@ -1306,6 +1318,7 @@ const SETTINGS_SCHEMA_VIEW_KEYS = Object.freeze([
   'ipProxyMode',
   'kiroRsUrl',
   'kiroRsKey',
+  'kiroAuthMethod',
   'grokWebchat2ApiUrl',
   'grokWebchat2ApiAdminKey',
   'openaiWebchatUrl',
@@ -3079,6 +3092,8 @@ function normalizePersistentSettingValue(key, value) {
         return self.MultiPageFlowRegistry.normalizeFlowId(value, DEFAULT_ACTIVE_FLOW_ID);
       }
       return String(value || '').trim().toLowerCase() === 'kiro' ? 'kiro' : DEFAULT_ACTIVE_FLOW_ID;
+    case 'kiroAuthMethod':
+      return String(value || '').trim().toLowerCase() === 'github' ? 'github' : 'builder-id';
     case 'kiroRsUrl':
     case 'grokWebchat2ApiUrl':
     case 'grok2ApiUrl':
@@ -3094,6 +3109,8 @@ function normalizePersistentSettingValue(key, value) {
       return String(value || '').trim().toLowerCase();
     case 'kiroRsKey':
     case 'grokWebchat2ApiAdminKey':
+    case 'grok2ApiUsername':
+    case 'grok2ApiPassword':
     case 'grok2ApiAdminKey':
     case 'openaiWebchatAdminKey':
     case 'openaiChatgpt2ApiAdminKey':
@@ -3241,6 +3258,7 @@ function normalizePersistentSettingValue(key, value) {
     case 'stepExecutionRangeByFlow':
       return normalizeStepExecutionRangeByFlow(value);
     case 'phoneSignupReloginAfterBindEmailEnabled':
+    case 'forcePasswordSignup':
     case 'phoneSmsReuseEnabled':
     case 'freePhoneReuseEnabled':
     case 'freePhoneReuseAutoEnabled':
@@ -3786,6 +3804,7 @@ function buildSettingsStatePatchFromFlatUpdates(updates = {}) {
   assignIfUpdated('customPassword', ['services', 'account', 'customPassword']);
   assignIfUpdated('signupMethod', ['flows', 'openai', 'signup', 'signupMethod']);
   assignIfUpdated('phoneSignupReloginAfterBindEmailEnabled', ['flows', 'openai', 'signup', 'phoneSignupReloginAfterBindEmailEnabled']);
+  assignIfUpdated('forcePasswordSignup', ['flows', 'openai', 'signup', 'forcePasswordSignup']);
   if (hasUpdate('plusModeEnabled')) {
     setSettingsStatePatchValue(patch, ['flows', 'openai', 'plus', 'plusModeEnabled'], false);
   }
@@ -3810,7 +3829,16 @@ function buildSettingsStatePatchFromFlatUpdates(updates = {}) {
   assignIfUpdated('ipProxyMode', ['services', 'proxy', 'mode']);
   assignIfUpdated('kiroRsUrl', ['flows', 'kiro', 'targets', 'kiro-rs', 'baseUrl']);
   assignIfUpdated('kiroRsKey', ['flows', 'kiro', 'targets', 'kiro-rs', 'apiKey']);
+  if (hasUpdate('kiroAuthMethod')) {
+    setSettingsStatePatchValue(
+      patch,
+      ['flows', 'kiro', 'authMethod'],
+      String(updates.kiroAuthMethod || '').trim().toLowerCase() === 'github' ? 'github' : 'builder-id'
+    );
+  }
   assignIfUpdated('grok2ApiUrl', ['flows', 'grok', 'targets', 'grok2api', 'baseUrl']);
+  assignIfUpdated('grok2ApiUsername', ['flows', 'grok', 'targets', 'grok2api', 'username']);
+  assignIfUpdated('grok2ApiPassword', ['flows', 'grok', 'targets', 'grok2api', 'password']);
   assignIfUpdated('grok2ApiAdminKey', ['flows', 'grok', 'targets', 'grok2api', 'apiKey']);
   assignIfUpdated('cline2apiBaseUrl', ['flows', 'cline', 'targets', 'cline2api', 'baseUrl']);
   assignIfUpdated('cline2apiAdminToken', ['flows', 'cline', 'targets', 'cline2api', 'apiKey']);
@@ -9953,7 +9981,7 @@ function getDownstreamStateResets(step, state = {}) {
       : {};
     if (Object.keys(kiroResets).length > 0) {
       return {
-        ...(stepKey === 'kiro-open-register-page' ? { flowStartTime: null } : {}),
+        ...((stepKey === 'kiro-open-register-page' || stepKey === 'kiro-github-open-signup') ? { flowStartTime: null } : {}),
         ...kiroResets,
       };
     }
@@ -10686,6 +10714,7 @@ async function skipNode(nodeId) {
   const linkedSkipNodeIdsByRoot = {
     'open-chatgpt': ['submit-signup-email', 'fill-password', 'fetch-signup-code', 'fill-profile', 'wait-registration-success'],
     'kiro-open-register-page': ['kiro-submit-email', 'kiro-submit-name', 'kiro-submit-verification-code', 'kiro-submit-password', 'kiro-complete-register-consent'],
+    'kiro-github-open-signup': ['kiro-github-submit-email', 'kiro-github-submit-password', 'kiro-github-submit-username', 'kiro-github-submit-email-prefs', 'kiro-github-submit-launch-code', 'kiro-open-github-auth', 'kiro-github-complete-oauth'],
     'grok-open-signup-page': ['grok-submit-email', 'grok-submit-verification-code', 'grok-submit-profile'],
   };
   const linkedSkipNodeIds = linkedSkipNodeIdsByRoot[normalizedNodeId] || [];
@@ -10733,6 +10762,51 @@ async function humanStepDelay(min = HUMAN_STEP_DELAY_MIN, max = HUMAN_STEP_DELAY
   await sleepWithStop(duration);
 }
 
+async function dispatchHumanClickWithDebugger(target, x, y) {
+  throwIfStopped();
+  await chrome.debugger.sendCommand(target, 'Page.bringToFront');
+  throwIfStopped();
+  // 分段逼近目标点：瞬移式单点移动是典型 bot 特征，Turnstile 类验证会参考移动轨迹。
+  for (const [dx, dy] of [[-40, -26], [-18, -12]]) {
+    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: Math.max(0, x + dx),
+      y: Math.max(0, y + dy),
+      button: 'none',
+      buttons: 0,
+      clickCount: 0,
+    });
+  }
+  await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+    type: 'mouseMoved',
+    x,
+    y,
+    button: 'none',
+    buttons: 0,
+    clickCount: 0,
+  });
+  throwIfStopped();
+  await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+    type: 'mousePressed',
+    x,
+    y,
+    button: 'left',
+    buttons: 1,
+    clickCount: 1,
+  });
+  throwIfStopped();
+  await new Promise((resolve) => setTimeout(resolve, 50 + Math.floor(Math.random() * 40)));
+  throwIfStopped();
+  await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
+    type: 'mouseReleased',
+    x,
+    y,
+    button: 'left',
+    buttons: 0,
+    clickCount: 1,
+  });
+}
+
 async function clickWithDebugger(tabId, rect, options = {}) {
   const visibleStep = Math.floor(Number(options.visibleStep) || 0) || 9;
   throwIfStopped();
@@ -10755,39 +10829,111 @@ async function clickWithDebugger(tabId, rect, options = {}) {
 
   try {
     throwIfStopped();
-    const x = Math.round(rect.centerX);
-    const y = Math.round(rect.centerY);
-
-    await chrome.debugger.sendCommand(target, 'Page.bringToFront');
-    throwIfStopped();
-    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
-      type: 'mouseMoved',
-      x,
-      y,
-      button: 'none',
-      buttons: 0,
-      clickCount: 0,
-    });
-    throwIfStopped();
-    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
-      type: 'mousePressed',
-      x,
-      y,
-      button: 'left',
-      buttons: 1,
-      clickCount: 1,
-    });
-    throwIfStopped();
-    await chrome.debugger.sendCommand(target, 'Input.dispatchMouseEvent', {
-      type: 'mouseReleased',
-      x,
-      y,
-      button: 'left',
-      buttons: 0,
-      clickCount: 1,
-    });
+    await dispatchHumanClickWithDebugger(target, Math.round(rect.centerX), Math.round(rect.centerY));
   } finally {
     await chrome.debugger.detach(target).catch(() => { });
+  }
+}
+
+// 在 CDP DOM 树（pierce，含 closed shadow root 与 iframe contentDocument）中
+// 定位 Cloudflare Turnstile 组件——content script 的 querySelectorAll
+// 碰不到 closed root，DOM 域可以。
+const TURNSTILE_IFRAME_ATTR_PATTERN = /challenges\.cloudflare\.com|turnstile|cf-chl|cdn-cgi\/challenge|cloudflare/i;
+const TURNSTILE_CONTAINER_ATTR_PATTERN = /turnstile/i;
+
+function findTurnstileNodeInDomTree(root) {
+  const queue = [root];
+  const iframeCandidates = [];
+  const containerCandidates = [];
+  const attrOf = (attrs, name) => {
+    for (let i = 0; i + 1 < attrs.length; i += 2) {
+      if (String(attrs[i]).toLowerCase() === name) return String(attrs[i + 1] || '');
+    }
+    return '';
+  };
+  let guard = 0;
+  while (queue.length && guard < 50000) {
+    guard += 1;
+    const node = queue.shift();
+    if (!node || typeof node !== 'object') continue;
+    const attrs = Array.isArray(node.attributes) ? node.attributes : [];
+    const src = attrOf(attrs, 'src');
+    const sitekey = attrOf(attrs, 'data-sitekey');
+    const attrBlob = `${attrOf(attrs, 'class')} ${attrOf(attrs, 'id')} ${attrOf(attrs, 'title')} ${src}`;
+    if (String(node.nodeName || '').toUpperCase() === 'IFRAME' && TURNSTILE_IFRAME_ATTR_PATTERN.test(attrBlob)) {
+      iframeCandidates.push(node);
+    } else if (sitekey || TURNSTILE_CONTAINER_ATTR_PATTERN.test(attrBlob)) {
+      containerCandidates.push(node);
+    }
+    for (const key of ['children', 'shadowRoots']) {
+      const list = node[key];
+      if (Array.isArray(list)) queue.push(...list);
+    }
+    if (node.contentDocument) queue.push(node.contentDocument);
+  }
+  return iframeCandidates[0] || containerCandidates[0] || null;
+}
+
+// Cloudflare 真人验证点击：优先用 CDP DOM 穿透定位 iframe 勾选框位置；
+// 找不到再退回 content script 提供的坐标。返回实际使用的点击点供日志诊断。
+async function clickTurnstileWithDebugger(tabId, rect = {}) {
+  throwIfStopped();
+  if (!tabId) {
+    throw new Error('未找到用于调试点击的标签页。');
+  }
+  const target = { tabId };
+  try {
+    await chrome.debugger.attach(target, '1.3');
+  } catch (err) {
+    throw new Error(`Cloudflare 验证点击调试器附加失败：${err.message}。如果页面已打开 DevTools，请先关闭。`);
+  }
+  try {
+    let point = null;
+    await chrome.debugger.sendCommand(target, 'DOM.enable').catch(() => {});
+    let node = null;
+    try {
+      const doc = await chrome.debugger.sendCommand(target, 'DOM.getDocument', { depth: -1, pierce: true });
+      node = findTurnstileNodeInDomTree(doc?.root);
+    } catch (_error) {}
+    if (node?.nodeId) {
+      try {
+        await chrome.debugger.sendCommand(target, 'DOM.scrollIntoViewIfNeeded', { nodeId: node.nodeId }).catch(() => {});
+        // getBoundingClientRect 直接给视口坐标（Input 事件要的就是视口坐标）；
+        // 不用 getBoxModel——它返回含滚动偏移的页面绝对坐标。
+        const resolved = await chrome.debugger.sendCommand(target, 'DOM.resolveNode', { nodeId: node.nodeId });
+        const objectId = resolved?.object?.objectId;
+        if (objectId) {
+          const measured = await chrome.debugger.sendCommand(target, 'Runtime.callFunctionOn', {
+            objectId,
+            functionDeclaration: 'function(){ const r = this.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; }',
+            returnByValue: true,
+          });
+          const rect = measured?.result?.value;
+          const width = Number(rect?.width);
+          const height = Number(rect?.height);
+          const left = Number(rect?.left);
+          const top = Number(rect?.top);
+          if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+            // 勾选框在组件左缘内约 24px；iframe 很宽（整页挑战）时按其
+            // 内部 ~300px 居中面板的左缘估算。
+            const inset = width <= 500
+              ? Math.min(24, Math.max(10, width * 0.08))
+              : Math.max(24, width / 2 - 126);
+            point = { centerX: Math.round(left + inset), centerY: Math.round(top + height / 2), via: 'dom' };
+          }
+        }
+      } catch (_error) {}
+    }
+    if (!point && Number.isFinite(Number(rect?.centerX)) && Number.isFinite(Number(rect?.centerY))) {
+      point = { centerX: Math.round(rect.centerX), centerY: Math.round(rect.centerY), via: 'content' };
+    }
+    if (!point) {
+      throw new Error('未能定位 Cloudflare 验证组件（CDP 穿透查询与页面坐标均失败）。');
+    }
+    await dispatchHumanClickWithDebugger(target, point.centerX, point.centerY);
+    return point;
+  } finally {
+    await chrome.debugger.detach(target).catch(() => {});
   }
 }
 
@@ -11070,6 +11216,14 @@ const AUTO_RUN_BACKGROUND_COMPLETED_STEP_KEYS = new Set([
   'kiro-complete-register-consent',
   'kiro-start-desktop-authorize',
   'kiro-complete-desktop-authorize',
+  'kiro-github-open-signup',
+  'kiro-github-submit-email',
+  'kiro-github-submit-password',
+  'kiro-github-submit-username',
+  'kiro-github-submit-email-prefs',
+  'kiro-github-submit-launch-code',
+  'kiro-open-github-auth',
+  'kiro-github-complete-oauth',
   'kiro-upload-credential',
   'grok-open-signup-page',
   'grok-submit-email',
@@ -13508,6 +13662,7 @@ const SIGNUP_ENTRY_URL = 'https://chatgpt.com/';
 const OPENAI_AUTH_INJECT_FILES = ['content/utils.js', 'content/operation-delay.js', 'flows/openai/content/auth-page-recovery.js', 'flows/openai/content/phone-country-utils.js', 'flows/openai/content/phone-auth.js', 'flows/openai/content/openai-auth.js'];
 const KIRO_REGISTER_INJECT_FILES = ['flows/openai/index.js', 'flows/kiro/index.js', 'flows/grok/index.js', 'flows/index.js', 'core/flow-kernel/flow-registry.js', 'core/flow-kernel/source-registry.js', 'shared/kiro-timeouts.js', 'content/utils.js', 'flows/kiro/content/register-page.js'];
 const KIRO_DESKTOP_AUTHORIZE_INJECT_FILES = ['flows/openai/index.js', 'flows/kiro/index.js', 'flows/grok/index.js', 'flows/index.js', 'core/flow-kernel/flow-registry.js', 'core/flow-kernel/source-registry.js', 'shared/kiro-timeouts.js', 'content/utils.js', 'flows/kiro/content/desktop-authorize-page.js'];
+const KIRO_GITHUB_INJECT_FILES = ['flows/openai/index.js', 'flows/kiro/index.js', 'flows/grok/index.js', 'flows/index.js', 'core/flow-kernel/flow-registry.js', 'core/flow-kernel/source-registry.js', 'shared/kiro-timeouts.js', 'content/utils.js', 'flows/kiro/content/github-signup-page.js'];
 const GROK_REGISTER_INJECT_FILES = ['flows/openai/index.js', 'flows/kiro/index.js', 'flows/grok/index.js', 'flows/index.js', 'core/flow-kernel/flow-registry.js', 'core/flow-kernel/source-registry.js', 'content/utils.js', 'flows/grok/content/register-page.js'];
 const GROK_SUB2API_OAUTH_INJECT_FILES = ['flows/openai/index.js', 'flows/kiro/index.js', 'flows/grok/index.js', 'flows/index.js', 'core/flow-kernel/flow-registry.js', 'core/flow-kernel/source-registry.js', 'content/utils.js', 'flows/grok/content/sub2api-oauth-page.js'];
 const CLINE_MS_LOGIN_INJECT_FILES = ['flows/openai/index.js', 'flows/kiro/index.js', 'flows/grok/index.js', 'flows/cline/index.js', 'flows/index.js', 'core/flow-kernel/flow-registry.js', 'core/flow-kernel/source-registry.js', 'content/utils.js', 'flows/cline/content/microsoft-login.js'];
@@ -13801,10 +13956,74 @@ const step5Executor = self.MultiPageBackgroundStep5?.createStep5Executor({
   sendToContentScript,
   setState,
 });
+let openAiOnboardingDismissReader = null;
+async function dismissChatGptOnboarding(state = {}) {
+  try {
+    const sessionReaderModule = self.MultiPageBackgroundOpenAiSessionReader;
+    const factory = sessionReaderModule?.createOpenAiSessionReader;
+    if (typeof factory !== 'function') {
+      return { ok: false, error: 'ChatGPT session reader module not loaded' };
+    }
+    openAiOnboardingDismissReader ||= factory({
+      chrome,
+      ensureContentScriptReadyOnTabUntilStopped,
+      getStepIdByKeyForState,
+      getTabId,
+      isTabAlive,
+      registerTab,
+      sendTabMessageUntilStopped,
+      sleepWithStop,
+      waitForTabCompleteUntilStopped,
+    });
+    const tabId = await openAiOnboardingDismissReader.resolveSessionTabId(state);
+    await waitForTabCompleteUntilStopped(tabId);
+    await ensureContentScriptReadyOnTabUntilStopped(sessionReaderModule.OPENAI_SESSION_SOURCE, tabId, {
+      inject: sessionReaderModule.OPENAI_SESSION_INJECT_FILES,
+      injectSource: sessionReaderModule.OPENAI_SESSION_SOURCE,
+    });
+    const result = await sendTabMessageUntilStopped(tabId, sessionReaderModule.OPENAI_SESSION_SOURCE, {
+      type: 'OPENAI_SESSION_DISMISS_ONBOARDING',
+      source: 'background',
+    });
+    return result && typeof result === 'object' ? result : { ok: true, clicked: false };
+  } catch (error) {
+    return { ok: false, error: getErrorMessage(error) };
+  }
+}
+
+async function reloadChatGptSessionTab(state = {}) {
+  try {
+    const sessionReaderModule = self.MultiPageBackgroundOpenAiSessionReader;
+    const factory = sessionReaderModule?.createOpenAiSessionReader;
+    if (typeof factory !== 'function') {
+      return { ok: false, error: 'ChatGPT session reader module not loaded' };
+    }
+    openAiOnboardingDismissReader ||= factory({
+      chrome,
+      ensureContentScriptReadyOnTabUntilStopped,
+      getStepIdByKeyForState,
+      getTabId,
+      isTabAlive,
+      registerTab,
+      sendTabMessageUntilStopped,
+      sleepWithStop,
+      waitForTabCompleteUntilStopped,
+    });
+    const tabId = await openAiOnboardingDismissReader.resolveSessionTabId(state);
+    await waitForTabCompleteUntilStopped(tabId);
+    await chrome.tabs.reload(tabId);
+    await waitForTabCompleteUntilStopped(tabId);
+    return { ok: true, reloaded: true, tabId };
+  } catch (error) {
+    return { ok: false, error: getErrorMessage(error) };
+  }
+}
 const step6Executor = self.MultiPageBackgroundStep6?.createStep6Executor({
   addLog,
   chrome,
   completeNodeFromBackground,
+  dismissChatGptOnboarding,
+  reloadChatGptSessionTab,
   getErrorMessage,
   registrationSuccessWaitMs: STEP6_REGISTRATION_SUCCESS_WAIT_MS,
   sleepWithStop,
@@ -14072,6 +14291,30 @@ const kiroDesktopAuthorizeRunner = self.MultiPageBackgroundKiroDesktopAuthorizeR
   waitForTabStableComplete,
   KIRO_DESKTOP_AUTHORIZE_INJECT_FILES,
 });
+const kiroGithubRegisterRunner = self.MultiPageBackgroundKiroGithubRegisterRunner?.createKiroGithubRegisterRunner({
+  addLog,
+  chrome,
+  completeNodeFromBackground,
+  ensureContentScriptReadyOnTab,
+  fetchImpl: typeof fetch === 'function' ? fetch.bind(globalThis) : null,
+  generatePassword,
+  generateRandomName,
+  getState,
+  getTabId,
+  isTabAlive,
+  KIRO_GITHUB_INJECT_FILES,
+  KIRO_REGISTER_INJECT_FILES,
+  pollFlowVerificationCode: flowMailPollingService?.pollFlowVerificationCode,
+  registerTab,
+  resolveSignupEmailForFlow,
+  reuseOrCreateTab,
+  sendToContentScriptResilient,
+  setPasswordState,
+  setState,
+  sleepWithStop,
+  throwIfStopped,
+  waitForTabStableComplete,
+});
 const kiroPublisher = self.MultiPageBackgroundKiroPublisherKiroRs?.createKiroRsPublisher({
   addLog,
   completeNodeFromBackground,
@@ -14087,9 +14330,142 @@ const grokWebchat2ApiPublisher = self.MultiPageBackgroundGrokPublisherWebchat2Ap
   getState,
   setState,
 });
+// auth.x.ai 的设备授权页要求同域 sso 会话；sso cookie 可能只挂在 grok.com/accounts.x.ai。
+// 对齐 openai-cpa：把 sso/sso-rw 以 .x.ai 域补写进「已持有 sso 的 cookie store」
+// （无痕窗口的 sso 在无痕 store，不能写错 store，也不要污染无关浏览器会话）。
+async function seedGrokSsoCookiesForDeviceAuth(ssoCookie) {
+  if (!chrome?.cookies?.set || !chrome?.cookies?.getAllCookieStores || !chrome?.cookies?.get) {
+    return;
+  }
+  const stores = await chrome.cookies.getAllCookieStores().catch(() => []);
+  for (const store of stores || []) {
+    const storeId = String(store?.id || '').trim();
+    if (!storeId) continue;
+    const hasSession = await chrome.cookies.get({ url: 'https://accounts.x.ai/', name: 'sso', storeId }).catch(() => null)
+      || await chrome.cookies.get({ url: 'https://grok.com/', name: 'sso', storeId }).catch(() => null)
+      || await chrome.cookies.get({ url: 'https://accounts.x.ai/', name: 'sso-rw', storeId }).catch(() => null);
+    if (!hasSession) continue;
+    for (const name of ['sso', 'sso-rw']) {
+      await chrome.cookies.set({
+        url: 'https://auth.x.ai/',
+        name,
+        value: ssoCookie,
+        domain: '.x.ai',
+        secure: true,
+        httpOnly: true,
+        sameSite: 'no_restriction',
+        storeId,
+      }).catch(() => {});
+    }
+  }
+}
+
+// 通过 Grok Device Flow 把 sso cookie 换成 OAuth 凭据（grok_build 导入用）。
+// 复用 SUB2API OAuth 页驱动完成「输入代码 → 授权 Grok Build → 允许」的页面确认。
+async function exchangeGrokSsoToOAuthToken(currentState = {}) {
+  const deviceFlow = self.MultiPageBackgroundGrokSsoDeviceFlow;
+  if (!deviceFlow) {
+    throw new Error('SSO→OAuth 凭据转换模块未加载。');
+  }
+  const fetchImpl = typeof fetch === 'function' ? fetch.bind(globalThis) : null;
+  const ssoCookie = String(
+    currentState?.runtimeState?.flowState?.grok?.sso?.currentCookie
+    || currentState?.grokSsoCookie
+    || ''
+  ).trim();
+  if (!ssoCookie) {
+    throw new Error('缺少 Grok SSO Cookie，无法执行设备授权。');
+  }
+  await seedGrokSsoCookiesForDeviceAuth(ssoCookie);
+  const sourceId = 'grok-sub2api-oauth-page';
+  const deviceCode = await deviceFlow.requestDeviceCode(fetchImpl);
+  await addLog(`Grok 设备授权已发起（代码 ${deviceCode.userCode}），正在打开授权页确认...`, 'info');
+  const tabId = await reuseOrCreateTab(sourceId, deviceCode.verificationUrl);
+  if (!Number.isInteger(tabId)) {
+    throw new Error('无法打开 Grok 设备授权页。');
+  }
+  await registerTab(sourceId, tabId);
+  if (typeof waitForTabStableComplete === 'function') {
+    await waitForTabStableComplete(tabId, {
+      timeoutMs: 30000,
+      retryDelayMs: 300,
+      stableMs: 800,
+      initialDelayMs: 100,
+    }).catch(() => {});
+  }
+  await ensureContentScriptReadyOnTabUntilStopped(sourceId, tabId, {
+    inject: GROK_SUB2API_OAUTH_INJECT_FILES,
+    injectSource: sourceId,
+    retryDelayMs: 500,
+    logMessage: '正在连接 Grok 设备授权页...',
+  });
+  const sendApproveAction = (action, extra = {}) => sendToContentScriptResilient(sourceId, {
+    type: 'EXECUTE_GROK_SUB2API_OAUTH_ACTION',
+    source: 'background',
+    payload: { action, userCode: deviceCode.userCode, ...extra },
+  }, {
+    timeoutMs: 110000,
+    retryDelayMs: 500,
+    responseTimeoutMs: 100000,
+    logMessage: '正在确认 Grok 设备授权...',
+  }).then((result) => {
+    if (result?.error) {
+      throw new Error(`设备授权页：${result.error}`);
+    }
+    return result;
+  });
+  // 与 openai-cpa 对齐：先走协议级 verify/approve 表单 POST（页面 fetch 同域
+  // 携带 sso 会话，不依赖按钮 DOM）；失败再回退到页面点击驱动。
+  const principalId = typeof deviceFlow.resolvePrincipalIdFromSso === 'function'
+    ? deviceFlow.resolvePrincipalIdFromSso(ssoCookie)
+    : '';
+  const approvePromise = (async () => {
+    try {
+      await sendApproveAction('approve-device-http', { principalId });
+      await addLog('Grok 设备授权已通过协议提交（verify+approve）。', 'info');
+    } catch (error) {
+      await addLog(`设备授权协议提交失败（${getErrorMessage(error)}），回退到页面点击授权。`, 'warn');
+      await sendApproveAction('approve-device');
+    }
+    // 页面已确认完成；token 以 device-code 轮询为准，返回一个挂起 promise 让轮询继续。
+    return new Promise(() => {});
+  })();
+  // token 若先到达，approve 侧后续的 reject 不能变成未处理拒绝。
+  approvePromise.catch(() => {});
+  const token = await Promise.race([
+    deviceFlow.pollDeviceToken(fetchImpl, {
+      deviceCode: deviceCode.deviceCode,
+      intervalMs: Math.max(500, (Number(deviceCode.intervalSeconds) || 5) * 300),
+      timeoutMs: 120000,
+      isStopped: () => stopRequested,
+    }),
+    approvePromise,
+  ]);
+  const fallbackEmail = String(
+    currentState?.runtimeState?.flowState?.grok?.register?.email
+    || currentState?.grokEmail
+    || currentState?.email
+    || ''
+  ).trim();
+  const record = deviceFlow.normalizeTokenRecord(token, { ssoCookie, email: fallbackEmail });
+  if (!record.email) {
+    const info = await deviceFlow.fetchUserInfo(fetchImpl, record.access_token).catch(() => ({}));
+    const recordEmail = String(info?.email || '').trim();
+    if (recordEmail) {
+      record.email = recordEmail;
+    }
+  }
+  await addLog('Grok 设备授权完成，OAuth 凭据已获取。', 'ok');
+  return record;
+}
+
+// 账号级 Cloudflare Cookie 不上传：cf_clearance/__cf_bm 绑定签发 IP+UA，
+// 浏览器侧采集的 cookie 跨 IP 使用只会被 CF 标记；出口治理由服务端
+// egress 节点负责（对齐可用平台导出 cloudflare_cookies="" 的形态）。
 const grok2ApiPublisher = self.MultiPageBackgroundGrokPublisherGrok2Api?.createGrok2ApiPublisher({
   addLog,
   completeNodeFromBackground,
+  exchangeSsoToken: exchangeGrokSsoToOAuthToken,
   fetchImpl: typeof fetch === 'function' ? fetch.bind(globalThis) : null,
   getState,
   setState,
@@ -14271,6 +14647,14 @@ const stepExecutorsByKey = {
   'kiro-complete-register-consent': (state) => kiroRegisterRunner.executeKiroCompleteRegisterConsent(state),
   'kiro-start-desktop-authorize': (state) => kiroDesktopAuthorizeRunner.executeKiroStartDesktopAuthorize(state),
   'kiro-complete-desktop-authorize': (state) => kiroDesktopAuthorizeRunner.executeKiroCompleteDesktopAuthorize(state),
+  'kiro-github-open-signup': (state) => kiroGithubRegisterRunner.executeKiroGithubOpenSignup(state),
+  'kiro-github-submit-email': (state) => kiroGithubRegisterRunner.executeKiroGithubSubmitEmail(state),
+  'kiro-github-submit-password': (state) => kiroGithubRegisterRunner.executeKiroGithubSubmitPassword(state),
+  'kiro-github-submit-username': (state) => kiroGithubRegisterRunner.executeKiroGithubSubmitUsername(state),
+  'kiro-github-submit-email-prefs': (state) => kiroGithubRegisterRunner.executeKiroGithubSubmitEmailPrefs(state),
+  'kiro-github-submit-launch-code': (state) => kiroGithubRegisterRunner.executeKiroGithubSubmitLaunchCode(state),
+  'kiro-open-github-auth': (state) => kiroGithubRegisterRunner.executeKiroOpenGithubAuth(state),
+  'kiro-github-complete-oauth': (state) => kiroGithubRegisterRunner.executeKiroGithubCompleteOauth(state),
   'kiro-upload-credential': (state) => kiroPublisher.executeKiroUploadCredential(state),
   'grok-open-signup-page': (state) => grokRegisterRunner.executeGrokOpenSignupPage(state),
   'grok-submit-email': (state) => grokRegisterRunner.executeGrokSubmitEmail(state),
@@ -14297,6 +14681,8 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   broadcastDataUpdate,
   applyIpProxySettingsFromState,
   checkIcloudSession,
+  clickWithDebugger,
+  clickTurnstileWithDebugger,
   clearAccountRunHistory: (...args) => clearAndBroadcastAccountRunHistory(...args),
   deleteAccountRunHistoryRecords: (...args) => deleteAndBroadcastAccountRunHistoryRecords(...args),
   clearAutoRunTimerAlarm,

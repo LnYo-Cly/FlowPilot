@@ -4,6 +4,7 @@ const KIRO_REGISTER_PAGE_LISTENER_SENTINEL = 'data-multipage-kiro-register-page-
 const DEFAULT_KIRO_PAGE_LOAD_TIMEOUT_MS = globalThis.MultiPageKiroTimeouts?.DEFAULT_KIRO_PAGE_LOAD_TIMEOUT_MS || (3 * 60 * 1000);
 const KIRO_CONTINUE_TEXT_PATTERN = /continue|继续/i;
 const KIRO_BUILDER_ID_TEXT_PATTERN = /aws\s*builder\s*id|builder\s*id/i;
+const KIRO_GITHUB_TEXT_PATTERN = /github|git\s*hub/i;
 const KIRO_CONFIRM_CONTINUE_TEXT_PATTERN = /confirm and continue|确认并继续/i;
 const KIRO_ALLOW_ACCESS_TEXT_PATTERN = /allow access|允许访问/i;
 const KIRO_SUCCESS_TEXT_PATTERN = /authorization successful|you may now close this window|you are now signed in|授权成功|可以关闭此窗口|已登录/i;
@@ -459,6 +460,17 @@ function findBuilderIdButton() {
   });
 }
 
+function findKiroGithubButton() {
+  const candidates = Array.from(document.querySelectorAll(
+    'button, [role="button"], a, input[type="submit"], input[type="button"]'
+  )).filter((element) => isVisibleKiroElement(element)
+    && !element.disabled
+    && element.getAttribute('aria-disabled') !== 'true');
+  return candidates.find((element) => KIRO_GITHUB_TEXT_PATTERN.test(getElementActionText(element)))
+    || candidates.find((element) => /github/i.test(String(element?.getAttribute?.('data-testid') || element?.id || element?.name || '')))
+    || null;
+}
+
 function isKiroWebSignedInPage(pageText = '') {
   const parsedUrl = parseCurrentUrl();
   const pathname = String(parsedUrl?.pathname || '').replace(/\/+$/, '') || '/';
@@ -566,14 +578,17 @@ function detectKiroRegisterPageState() {
 
   if (isKiroWebHost(location.hostname || '')) {
     const builderIdButton = findBuilderIdButton();
-    if (builderIdButton) {
+    const githubButton = findKiroGithubButton();
+    if (builderIdButton || githubButton) {
       return {
         state: 'kiro_signin_page',
         url: currentUrl,
         email: pageEmail,
         accountEmail: pageEmail,
-        actionButton: builderIdButton,
-        actionText: getElementActionText(builderIdButton),
+        actionButton: builderIdButton || githubButton,
+        actionText: getElementActionText(builderIdButton || githubButton),
+        hasGithubButton: Boolean(githubButton),
+        hasBuilderIdButton: Boolean(builderIdButton),
       };
     }
     if (isKiroWebSignedInPage(pageText)) {
@@ -788,6 +803,25 @@ async function selectKiroBuilderId() {
   };
 }
 
+async function selectKiroGithub() {
+  const readyState = await ensureKiroRegisterPageState({
+    targetStates: ['kiro_signin_page'],
+    timeoutMs: DEFAULT_KIRO_PAGE_LOAD_TIMEOUT_MS,
+    retryDelayMs: 250,
+  });
+  const githubButton = findKiroGithubButton();
+  if (!githubButton) {
+    throw new Error('Kiro 官方登录页未找到 GitHub 登录按钮。');
+  }
+  simulateClick(githubButton);
+  return {
+    submitted: true,
+    state: 'github_selected',
+    url: location.href,
+    actionText: getElementActionText(githubButton),
+  };
+}
+
 async function submitKiroEmail(payload = {}) {
   const email = String(payload?.email || '').trim();
   if (!email) {
@@ -964,6 +998,8 @@ async function handleKiroRegisterCommand(message) {
         authorizationActionKind: detected?.authorizationActionKind || '',
         authorizationActionText: detected?.authorizationActionText || '',
         actionText: detected?.actionText || '',
+        hasGithubButton: Boolean(detected?.hasGithubButton),
+        hasBuilderIdButton: Boolean(detected?.hasBuilderIdButton),
         codeInvalid: Boolean(detected?.codeInvalid),
       };
     }
@@ -975,6 +1011,9 @@ async function handleKiroRegisterCommand(message) {
       const nodeId = String(message.nodeId || message.payload?.nodeId || '').trim();
       if (nodeId === 'kiro-open-register-page') {
         return selectKiroBuilderId();
+      }
+      if (nodeId === 'kiro-open-github-auth') {
+        return selectKiroGithub();
       }
       if (nodeId === 'kiro-submit-email') {
         return submitKiroEmail(message.payload || {});

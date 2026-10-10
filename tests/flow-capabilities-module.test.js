@@ -256,7 +256,7 @@ test('flow capability registry exposes Kiro as an independent flow with its own 
   assert.deepEqual(capabilityState.flowCapabilities.contributionAdapterIds, ['kiro-builder-id']);
   assert.deepEqual(
     capabilityState.visibleGroupIds,
-    ['kiro-runtime-status', 'shared-auto-run', 'kiro-target-kiro-rs', 'service-account', 'service-email', 'service-proxy']
+    ['kiro-auth-method', 'kiro-runtime-status', 'shared-auto-run', 'kiro-target-kiro-rs', 'service-account', 'service-email', 'service-proxy']
   );
 });
 
@@ -506,7 +506,7 @@ test('flow capability registry disables phone settings for OpenAI webchat target
   assert.equal(capabilityState.stepDefinitionOptions.openaiWebchatUploadEnabled, true);
   assert.deepEqual(
     capabilityState.visibleGroupIds,
-    ['openai-account-delivery', 'openai-plus', 'shared-auto-run', 'openai-oauth', 'openai-step6', 'openai-target-webchat', 'service-account', 'service-email', 'service-proxy']
+    ['openai-account-delivery', 'openai-signup-options', 'openai-plus', 'shared-auto-run', 'openai-oauth', 'openai-step6', 'openai-target-webchat', 'service-account', 'service-email', 'service-proxy']
   );
 
   const validation = registry.validateModeSwitch({
@@ -589,7 +589,7 @@ test('flow capability registry disables phone settings for OpenAI ChatGPT2API ta
   assert.equal(capabilityState.stepDefinitionOptions.openaiChatgpt2ApiUploadEnabled, true);
   assert.deepEqual(
     capabilityState.visibleGroupIds,
-    ['openai-account-delivery', 'openai-plus', 'shared-auto-run', 'openai-oauth', 'openai-step6', 'openai-target-chatgpt2api', 'service-account', 'service-email', 'service-proxy']
+    ['openai-account-delivery', 'openai-signup-options', 'openai-plus', 'shared-auto-run', 'openai-oauth', 'openai-step6', 'openai-target-chatgpt2api', 'service-account', 'service-email', 'service-proxy']
   );
 
   const validation = registry.validateModeSwitch({

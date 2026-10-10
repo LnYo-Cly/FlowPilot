@@ -12,6 +12,8 @@
       broadcastDataUpdate,
       applyIpProxySettingsFromState,
       checkIcloudSession,
+      clickWithDebugger = null,
+      clickTurnstileWithDebugger = null,
       clearAccountRunHistory,
       deleteAccountRunHistoryRecords,
       clearAutoRunTimerAlarm,
@@ -1113,6 +1115,55 @@
             await addLog(`内容脚本已就绪：${getSourceLabel(message.source)}（标签页 ${tabId}）`);
           }
           return { ok: true };
+        }
+
+        case 'GROK_TURNSTILE_CLICK_REQUEST': {
+          // 优先走 CDP DOM 穿透定位（closed shadow root/嵌套 iframe 也能找到组件）；
+          // content 侧坐标仅作兜底。payload 可只带 {probe:true} 让后台自行定位。
+          const turnstileClicker = typeof clickTurnstileWithDebugger === 'function'
+            ? clickTurnstileWithDebugger
+            : clickWithDebugger;
+          if (typeof turnstileClicker !== 'function') {
+            return { ok: false, error: 'debugger click unavailable' };
+          }
+          const turnstileTabId = sender.tab?.id;
+          const rect = message.payload || {};
+          const centerX = Number(rect.centerX);
+          const centerY = Number(rect.centerY);
+          const hasCoords = Number.isFinite(centerX) && Number.isFinite(centerY);
+          const canProbe = turnstileClicker === clickTurnstileWithDebugger;
+          if (!turnstileTabId || (!hasCoords && !canProbe)) {
+            return { ok: false, error: 'invalid turnstile click payload' };
+          }
+          try {
+            const point = await turnstileClicker(turnstileTabId, hasCoords ? { centerX, centerY } : {});
+            const px = Number(point?.centerX ?? centerX);
+            const py = Number(point?.centerY ?? centerY);
+            const viaLabel = point?.via === 'dom' ? 'CDP 定位' : '页面定位';
+            await addLog(`Grok：已通过调试器对 Cloudflare 人机验证发起可信点击（${viaLabel} x=${px}, y=${py}）。`, 'info');
+            return { ok: true, via: point?.via || 'content' };
+          } catch (error) {
+            return { ok: false, error: String(error?.message || error) };
+          }
+        }
+
+        case 'GROK_TRUSTED_CLICK_REQUEST': {
+          // 通用可信点击：页面忽略合成点击（isTrusted 校验）时由 content
+          // 提供元素视口坐标，后台经 debugger 派发真实鼠标事件。
+          const trustedTabId = sender.tab?.id;
+          const clickRect = message.payload || {};
+          const clickX = Number(clickRect.centerX);
+          const clickY = Number(clickRect.centerY);
+          if (!trustedTabId || !Number.isFinite(clickX) || !Number.isFinite(clickY) || typeof clickWithDebugger !== 'function') {
+            return { ok: false, error: 'invalid trusted click payload' };
+          }
+          try {
+            await clickWithDebugger(trustedTabId, { centerX: clickX, centerY: clickY });
+            await addLog(`Grok：已对页面元素发起可信点击（x=${Math.round(clickX)}, y=${Math.round(clickY)}）。`, 'info');
+            return { ok: true };
+          } catch (error) {
+            return { ok: false, error: String(error?.message || error) };
+          }
         }
 
         case 'LOG': {

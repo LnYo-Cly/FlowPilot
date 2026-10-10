@@ -6,6 +6,10 @@
   const DESKTOP_AUTHORIZE_CODE_RULE_ID = 'kiro-complete-desktop-authorize';
   const SUBMIT_VERIFICATION_CODE_NODE_ID = 'kiro-submit-verification-code';
   const DESKTOP_AUTHORIZE_NODE_ID = 'kiro-complete-desktop-authorize';
+  const GITHUB_LAUNCH_CODE_NODE_ID = 'kiro-github-submit-launch-code';
+  const GITHUB_DEVICE_CODE_NODE_ID = 'kiro-github-submit-device-code';
+  const GITHUB_LAUNCH_CODE_RULE_ID = 'kiro-github-launch-code';
+  const GITHUB_DEVICE_CODE_RULE_ID = 'kiro-github-device-code';
   const KIRO_AWS_VERIFICATION_CODE_PATTERNS = Object.freeze([
     Object.freeze({
       source: '(?:verification\\s*code|验证码|Your code is|code is)[：:\\s]*(\\d{6})',
@@ -43,6 +47,74 @@
     'aws',
   ]);
 
+  const GITHUB_LAUNCH_CODE_PATTERNS = Object.freeze([
+    Object.freeze({
+      source: '(\\d{4}-\\d{4})',
+      flags: 'g',
+    }),
+    Object.freeze({
+      source: '(?:launch\\s*code|verification\\s*code|验证码|code\\s*(?:is|:))[：:\\s]*([A-Za-z0-9]{4}-?[A-Za-z0-9]{4})',
+      flags: 'gi',
+    }),
+    Object.freeze({
+      source: '>\\s*(\\d{4}-?\\d{4})\\s*<',
+      flags: 'g',
+    }),
+    Object.freeze({
+      source: '^\\s*(\\d{4}-\\d{4}|\\d{8})\\s*$',
+      flags: 'gm',
+    }),
+  ]);
+  const GITHUB_SENDER_FILTERS = Object.freeze([
+    'noreply@github.com',
+    'notifications@github.com',
+    'github@github.com',
+    'github',
+  ]);
+  const GITHUB_LAUNCH_SUBJECT_FILTERS = Object.freeze([
+    'launch code',
+    'github',
+    'verify',
+    'verification',
+  ]);
+  const GITHUB_LAUNCH_REQUIRED_KEYWORDS = Object.freeze([
+    'launch',
+    'github',
+    'code',
+  ]);
+  const GITHUB_DEVICE_CODE_PATTERNS = Object.freeze([
+    Object.freeze({
+      source: '(?:verification\\s*code|code\\s*(?:is|:)|验证码)[：:\\s]*([A-Za-z0-9]{4}-?[A-Za-z0-9]{4})',
+      flags: 'gi',
+    }),
+    Object.freeze({
+      source: '(\\d{4}-\\d{4})',
+      flags: 'g',
+    }),
+    Object.freeze({
+      source: '>\\s*([A-Za-z0-9]{4}-?[A-Za-z0-9]{4})\\s*<',
+      flags: 'g',
+    }),
+    Object.freeze({
+      source: '^\\s*([A-Za-z0-9]{8}|\\d{6}|\\d{4}-\\d{4})\\s*$',
+      flags: 'gm',
+    }),
+  ]);
+  const GITHUB_DEVICE_SUBJECT_FILTERS = Object.freeze([
+    'verification code',
+    'device',
+    'verify',
+    'sign-in',
+    'sign in',
+    'github',
+  ]);
+  const GITHUB_DEVICE_REQUIRED_KEYWORDS = Object.freeze([
+    'verification',
+    'code',
+    'device',
+    'github',
+  ]);
+
   function cleanString(value = '') {
     return String(value ?? '').trim();
   }
@@ -61,8 +133,10 @@
 
   function resolveNodeId(input) {
     const directNodeId = cleanString(input?.nodeId || input);
-    if (directNodeId === DESKTOP_AUTHORIZE_NODE_ID) {
-      return DESKTOP_AUTHORIZE_NODE_ID;
+    if (directNodeId === DESKTOP_AUTHORIZE_NODE_ID
+      || directNodeId === GITHUB_LAUNCH_CODE_NODE_ID
+      || directNodeId === GITHUB_DEVICE_CODE_NODE_ID) {
+      return directNodeId;
     }
     return SUBMIT_VERIFICATION_CODE_NODE_ID;
   }
@@ -99,22 +173,40 @@
       const normalizedProvider = cleanString(state?.mailProvider).toLowerCase();
       const mail2925Provider = isMail2925Provider(state);
       const luckmailProvider = normalizedProvider === cleanString(LUCKMAIL_PROVIDER).toLowerCase();
+      const githubEmail = cleanString(
+        runtimeState.github?.email
+        || runtimeState.register?.email
+        || state?.email
+      ).toLowerCase();
+      const isGithubLaunch = nodeId === GITHUB_LAUNCH_CODE_NODE_ID;
+      const isGithubDevice = nodeId === GITHUB_DEVICE_CODE_NODE_ID;
+      const isGithubRule = isGithubLaunch || isGithubDevice;
 
       return {
         flowId: 'kiro',
-        ruleId: nodeId === DESKTOP_AUTHORIZE_NODE_ID
-          ? DESKTOP_AUTHORIZE_CODE_RULE_ID
-          : SUBMIT_VERIFICATION_CODE_RULE_ID,
+        ruleId: isGithubLaunch
+          ? GITHUB_LAUNCH_CODE_RULE_ID
+          : (isGithubDevice
+            ? GITHUB_DEVICE_CODE_RULE_ID
+            : (nodeId === DESKTOP_AUTHORIZE_NODE_ID
+              ? DESKTOP_AUTHORIZE_CODE_RULE_ID
+              : SUBMIT_VERIFICATION_CODE_RULE_ID)),
         nodeId,
         step: normalizedStep,
         artifactType: 'code',
-        codePatterns: KIRO_AWS_VERIFICATION_CODE_PATTERNS,
+        codePatterns: isGithubRule
+          ? (isGithubDevice ? GITHUB_DEVICE_CODE_PATTERNS : GITHUB_LAUNCH_CODE_PATTERNS)
+          : KIRO_AWS_VERIFICATION_CODE_PATTERNS,
         filterAfterTimestamp: 0,
-        requiredKeywords: KIRO_AWS_REQUIRED_KEYWORDS,
-        senderFilters: KIRO_AWS_SENDER_FILTERS,
-        subjectFilters: KIRO_AWS_SUBJECT_FILTERS,
-        targetEmail,
-        targetEmailHints: buildTargetEmailHints(targetEmail),
+        requiredKeywords: isGithubRule
+          ? (isGithubDevice ? GITHUB_DEVICE_REQUIRED_KEYWORDS : GITHUB_LAUNCH_REQUIRED_KEYWORDS)
+          : KIRO_AWS_REQUIRED_KEYWORDS,
+        senderFilters: isGithubRule ? GITHUB_SENDER_FILTERS : KIRO_AWS_SENDER_FILTERS,
+        subjectFilters: isGithubRule
+          ? (isGithubDevice ? GITHUB_DEVICE_SUBJECT_FILTERS : GITHUB_LAUNCH_SUBJECT_FILTERS)
+          : KIRO_AWS_SUBJECT_FILTERS,
+        targetEmail: isGithubRule ? (githubEmail || targetEmail) : targetEmail,
+        targetEmailHints: buildTargetEmailHints(isGithubRule ? (githubEmail || targetEmail) : targetEmail),
         mail2925MatchTargetEmail: shouldMatchMail2925TargetEmail(state),
         maxAttempts: luckmailProvider
           ? 3
@@ -151,6 +243,10 @@
   return {
     DESKTOP_AUTHORIZE_CODE_RULE_ID,
     DESKTOP_AUTHORIZE_NODE_ID,
+    GITHUB_DEVICE_CODE_NODE_ID,
+    GITHUB_DEVICE_CODE_RULE_ID,
+    GITHUB_LAUNCH_CODE_NODE_ID,
+    GITHUB_LAUNCH_CODE_RULE_ID,
     KIRO_AWS_REQUIRED_KEYWORDS,
     KIRO_AWS_SENDER_FILTERS,
     KIRO_AWS_SUBJECT_FILTERS,
